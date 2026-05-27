@@ -1,0 +1,56 @@
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# Node dependencies and package-manager caches
+node_modules/
+.npm/
+
+# Logs
+*.log
+1.1.0
+=5.15.10
+
+# Local editor and agent state
+.vscode/
+.claude/
+.codex/
+.codex_work/
+browser_data/
+*.lnk
+
+# Local app secrets and runtime data
+auth.json
+settings.json
+replay_log.jsonl
+data/
+Aiszr/data/
+Aiszr/wechat_browser_data/
+
+# Generated document/export outputs
+pdf_pages/
+thesis_extracted/
+thesis_figs/
+template_media/
+Aiszr/deploy/heygem/smoke_hls/
+Aiszr/deploy/heygem/bench_results.csv
+
+# Embedded repositories kept outside this root repo baseline
+PyQt-SiliconUI/
+Aiszr/deploy/heygem/HeyGem/
+
+# Archives and backups
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bak

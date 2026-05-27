@@ -1,0 +1,913 @@
+"""AI 直播间首页 — LiveRoom 嵌入网格 + Sonoma 风快捷面板。"""
+from __future__ import annotations
+
+import ctypes
+import threading
+from ctypes import wintypes
+
+import numpy as np
+from PyQt5.QtCore import (
+    pyqtSignal, Qt, QRectF, QAbstractNativeEventFilter, QTimer,
+)
+from PyQt5.QtGui import QColor, QIntValidator, QPainter, QPixmap
+from PyQt5.QtSvg import QSvgRenderer
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QTextBrowser, QToolTip, QApplication, QDialog,
+)
+import ui_theme as theme
+from ui_components import MacCard, MacButton, MacComboBox, MacLineEdit
+
+from siui.components.page import SiPage
+from siui.core import SiGlobal
+
+from obs_actions import ObsActionSettings
+from ui_settings import _load_settings, _save_settings
+
+
+# Windows 设备插拔通知
+_WM_DEVICECHANGE = 0x0219
+_DBT_DEVNODES_CHANGED = 0x0007
+
+
+class _MSG(ctypes.Structure):
+    _fields_ = [
+        ("hWnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt_x", ctypes.c_long),
+        ("pt_y", ctypes.c_long),
+    ]
+
+
+class _DeviceChangeFilter(QAbstractNativeEventFilter):
+    """监听 Windows WM_DEVICECHANGE，设备节点变化时回调。"""
+
+    def __init__(self, callback):
+        super().__init__()
+        self._cb = callback
+
+    def nativeEventFilter(self, event_type, message):
+        if event_type == b"windows_generic_MSG":
+            try:
+                msg = _MSG.from_address(int(message))
+                if msg.message == _WM_DEVICECHANGE and \
+                        msg.wParam == _DBT_DEVNODES_CHANGED:
+                    self._cb()
+            except Exception:
+                pass
+        return False, 0
+
+
+def _icon_svg(name: str) -> str:
+    """Resolve Fluent UI icon → SVG string via icon pack."""
+    try:
+        return SiGlobal.siui.iconpack.get(
+            name, color_code=SiGlobal.siui.colors["SVG_NORMAL"])
+    except Exception:
+        return ""
+
+
+class _VolumeIcon(QWidget):
+    """音量响应图标 — mic/speaker SVG，内部根据实时音量从底部往上填充绿→黄→红色条。
+
+    mode="input"    监听选中的输入设备（麦克风）
+    mode="loopback" 监听选中输出设备的 WASAPI loopback（系统输出）
+    """
+
+    ICON_SIZE = 22
+    LEVEL_BOOST = 4.0   # 放大量，让小声也能看见
+    ATTACK = 1.0        # 峰值瞬间打满
+    DECAY = 0.85        # 衰减系数，越大降得越慢
+
+    def __init__(self, icon_name: str, mode: str = "input", parent=None):
+        super().__init__(parent)
+        self.setFixedSize(30, 30)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._mode = mode
+        svg_data = _icon_svg(icon_name)
+        if isinstance(svg_data, str):
+            svg_data = svg_data.encode("utf-8")
+        self._renderer = QSvgRenderer(svg_data) if svg_data else QSvgRenderer()
+        self._level = 0.0
+        self._lock = threading.Lock()
+        self._pa = None
+        self._stream = None
+        self._target_device: int | None = None
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)  # ~30Hz repaint
+        self._timer.timeout.connect(self.update)
+        self._timer.start()
+
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._stop_stream)
+
+    # ── Public ─────────────────────────────────────────────
+
+    def set_device(self, device_index):
+        """切换监听设备 — input 模式传输入设备 idx；loopback 模式传 *输出* 设备 idx。"""
+        try:
+            idx = int(device_index) if device_index is not None else -1
+        except (TypeError, ValueError):
+            idx = -1
+        if idx < 0:
+            self._stop_stream()
+            self._target_device = None
+            return
+        if idx == self._target_device and self._stream is not None:
+            return
+        self._target_device = idx
+        self._stop_stream()
+        self._open_stream(idx)
+
+    # ── Internal: stream ──────────────────────────────────
+
+    def _open_stream(self, idx: int):
+        try:
+            import pyaudiowpatch as paw
+        except ImportError:
+            return
+        try:
+            self._pa = paw.PyAudio()
+            if self._mode == "loopback":
+                target_idx = self._resolve_loopback_idx(self._pa, idx)
+            else:
+                target_idx = idx
+            if target_idx is None:
+                self._stop_stream()
+                return
+            info = self._pa.get_device_info_by_index(target_idx)
+            channels = max(1, min(2, int(info.get("maxInputChannels") or 1)))
+            rate = int(info.get("defaultSampleRate") or 48000)
+            self._stream = self._pa.open(
+                format=paw.paFloat32,
+                channels=channels,
+                rate=rate,
+                input=True,
+                input_device_index=target_idx,
+                frames_per_buffer=1024,
+                stream_callback=self._cb,
+            )
+        except Exception as e:
+            try:
+                from loguru import logger
+                logger.warning(f"_VolumeIcon[{self._mode}] open failed (device={idx}): {e}")
+            except Exception:
+                pass
+            self._stop_stream()
+
+    @staticmethod
+    def _resolve_loopback_idx(pa, output_idx: int):
+        """根据用户选中的输出设备，找它的 [Loopback] 伴生输入设备。"""
+        try:
+            target_name = pa.get_device_info_by_index(output_idx).get("name", "")
+        except Exception:
+            target_name = ""
+        if target_name:
+            try:
+                for d in pa.get_loopback_device_info_generator():
+                    if target_name and target_name in d.get("name", ""):
+                        return d["index"]
+            except Exception:
+                pass
+        try:
+            return pa.get_default_wasapi_loopback()["index"]
+        except Exception:
+            return None
+
+    def _stop_stream(self):
+        if self._stream is not None:
+            try:
+                self._stream.stop_stream()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        if self._pa is not None:
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+            self._pa = None
+        with self._lock:
+            self._level = 0.0
+
+    def _cb(self, in_data, frame_count, time_info, status):
+        try:
+            import pyaudiowpatch as paw
+            arr = np.frombuffer(in_data, dtype=np.float32)
+            peak = float(np.max(np.abs(arr))) if arr.size else 0.0
+        except Exception:
+            return (None, 0)
+        with self._lock:
+            if peak > self._level:
+                self._level = peak
+            else:
+                self._level = self._level * self.DECAY + peak * (1.0 - self.DECAY)
+        return (None, paw.paContinue)
+
+    def closeEvent(self, event):
+        self._stop_stream()
+        super().closeEvent(event)
+
+    # ── Painting ──────────────────────────────────────────
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        sz = self.size()
+        iw = ih = self.ICON_SIZE
+        ox = (sz.width() - iw) // 2
+        oy = (sz.height() - ih) // 2
+
+        mic_pix = QPixmap(iw, ih)
+        mic_pix.fill(Qt.transparent)
+        if self._renderer.isValid():
+            p2 = QPainter(mic_pix)
+            p2.setRenderHint(QPainter.Antialiasing, True)
+            self._renderer.render(p2, QRectF(0, 0, iw, ih))
+            p2.end()
+
+        with self._lock:
+            lvl = self._level
+        boosted = min(1.0, lvl * self.LEVEL_BOOST)
+
+        fill_pix = QPixmap(iw, ih)
+        fill_pix.fill(Qt.transparent)
+        if boosted > 0.01:
+            p3 = QPainter(fill_pix)
+            h = int(ih * boosted)
+            p3.fillRect(0, ih - h, iw, h, self._level_color(boosted))
+            p3.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+            p3.drawPixmap(0, 0, mic_pix)
+            p3.end()
+
+        painter.drawPixmap(ox, oy, mic_pix)
+        if boosted > 0.01:
+            painter.setOpacity(0.75)
+            painter.drawPixmap(ox, oy, fill_pix)
+            painter.setOpacity(1.0)
+
+    @staticmethod
+    def _level_color(lvl: float) -> QColor:
+        """0..0.5 绿→黄，0.5..1 黄→红。"""
+        if lvl < 0.5:
+            t = lvl * 2
+            return QColor(int(255 * t), 255, 0)
+        t = (lvl - 0.5) * 2
+        return QColor(255, int(255 * (1 - t)), 0)
+
+
+class HomePage(SiPage):
+    navigate_to_page = pyqtSignal(int)
+    quick_start_requested = pyqtSignal()
+    obs_status_check_requested = pyqtSignal(object)
+    obs_settings_changed = pyqtSignal(object)
+    keyword_auto_reply_toggled = pyqtSignal(bool)
+    keyword_template_switch_requested = pyqtSignal(str)
+    keyword_related_settings_changed = pyqtSignal(int, int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setPadding(12)
+        self.setScrollMaximumWidth(1600)
+        self._audio_devices: list[dict] = []
+        self._selected_in_index: int = -1
+        self._selected_out_index: int = -1
+        self._worker = None
+        self._cooldown_timer: QTimer | None = None
+
+        root = QWidget(self)
+        self._root = root
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(theme.SPACING_SM)
+
+        # Hero greeting — Sonoma display title
+        outer.addWidget(self._build_hero())
+
+        grid = QGridLayout()
+        grid.setSpacing(theme.SPACING_MD)
+        grid.setRowStretch(0, 5)
+        grid.setRowStretch(1, 1)
+        grid.setColumnStretch(0, 2)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+
+        # ① LiveRoom slot (col 0-1, row 0)
+        self._monitor_slot = QVBoxLayout()
+        grid.addLayout(self._monitor_slot, 0, 0, 1, 2)
+
+        # ② Right column (rowspan=2): 推流控制(4) + 音频设备(2) + 快捷操作(4)
+        right_col = QVBoxLayout()
+        right_col.setSpacing(theme.SPACING_MD)
+        right_col.addWidget(self._build_stream_card(), stretch=4)
+        right_col.addWidget(self._build_audio_card(), stretch=2)
+        right_col.addWidget(self._build_quick_card(), stretch=4)
+        grid.addLayout(right_col, 0, 2, 2, 1)
+
+        # ③-④ Bottom row
+        grid.addWidget(self._build_keyword_card(), 1, 0)
+        grid.addWidget(self._build_obs_card(), 1, 1)
+
+        outer.addLayout(grid, stretch=1)
+        self.setAttachment(root)
+        self._load_audio_devices()
+        self._install_hotplug_watch()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        h = self.scroll_area.height()
+        if h > 0:
+            self._root.setFixedHeight(h)
+
+    def selected_out_index(self) -> int:
+        """Output device index chosen by the speaker dropdown. -1 means none.
+
+        Reads directly from the combo so we never disagree with what the user sees.
+        """
+        combo = getattr(self, "_spk_combo", None)
+        if combo is None or combo.count() == 0:
+            return -1
+        data = combo.currentData()
+        if data is None:
+            return -1
+        try:
+            return int(data)
+        except (TypeError, ValueError):
+            return -1
+
+    def set_live_page(self, live_page):
+        live_page.setParent(self)
+        self._monitor_slot.addWidget(live_page)
+
+    # ── Hero ───────────────────────────────────────────────
+
+    def _build_hero(self) -> QWidget:
+        """Sonoma-style display title row. Compact (36px) to preserve grid space."""
+        row = QWidget(self)
+        row.setFixedHeight(36)
+        ly = QHBoxLayout(row)
+        ly.setContentsMargins(8, 0, 8, 0)
+        ly.setSpacing(theme.SPACING_SM)
+        self._hero_title = QLabel("Aiszr · AI 直播助手")
+        self._hero_title.setFont(theme.FONT_TITLE_2)
+        ly.addWidget(self._hero_title)
+        ly.addStretch(1)
+        return row
+
+    # ── Stream control card ───────────────────────────────
+
+    def _build_stream_card(self) -> MacCard:
+        card = MacCard(self, title="推流控制")
+        body = card.body()
+        body.addWidget(QLabel("HLS: --"))
+        body.addWidget(QLabel("在线: --"))
+        row = QHBoxLayout()
+        row.setSpacing(theme.SPACING_SM)
+        row.addWidget(MacButton("一键推流", variant="primary"))
+        row.addWidget(MacButton("停止推流", variant="secondary"))
+        body.addLayout(row)
+        return card
+
+    # ── Keyword reply card ────────────────────────────────
+
+    def _build_keyword_card(self) -> MacCard:
+        card = MacCard(self, title="关键词回复")
+        body = card.body()
+        self._kw_combo = MacComboBox()
+        self._kw_combo.currentTextChanged.connect(self._on_kw_template_changed)
+        body.addWidget(self._kw_combo)
+        self._kw_preview = QTextBrowser()
+        self._kw_preview.setMinimumHeight(80)
+        body.addWidget(self._kw_preview)
+
+        # 时长调整 — 左右一半：冷却秒 / 每分钟最多响应
+        cfg_row = QHBoxLayout()
+        cfg_row.setSpacing(theme.SPACING_SM)
+
+        cd_box = QHBoxLayout()
+        cd_box.setSpacing(theme.SPACING_XS)
+        cd_label = QLabel("冷却秒")
+        cd_label.setFont(theme.FONT_CAPTION)
+        cd_box.addWidget(cd_label)
+        self._kw_cooldown_edit = MacLineEdit(placeholder="30")
+        self._kw_cooldown_edit.setValidator(QIntValidator(0, 36000, self))
+        self._kw_cooldown_edit.editingFinished.connect(self._on_kw_related_changed)
+        cd_box.addWidget(self._kw_cooldown_edit, stretch=1)
+        cfg_row.addLayout(cd_box, stretch=1)
+
+        rt_box = QHBoxLayout()
+        rt_box.setSpacing(theme.SPACING_XS)
+        rt_label = QLabel("每分钟")
+        rt_label.setFont(theme.FONT_CAPTION)
+        rt_box.addWidget(rt_label)
+        self._kw_rate_edit = MacLineEdit(placeholder="20")
+        self._kw_rate_edit.setValidator(QIntValidator(1, 600, self))
+        self._kw_rate_edit.editingFinished.connect(self._on_kw_related_changed)
+        rt_box.addWidget(self._kw_rate_edit, stretch=1)
+        cfg_row.addLayout(rt_box, stretch=1)
+
+        body.addLayout(cfg_row)
+        return card
+
+    def _on_kw_related_changed(self):
+        try:
+            cd = int(self._kw_cooldown_edit.text() or "30")
+        except ValueError:
+            cd = 30
+        try:
+            rt = int(self._kw_rate_edit.text() or "20")
+        except ValueError:
+            rt = 20
+        cd = max(0, cd)
+        rt = max(1, rt)
+        self.keyword_related_settings_changed.emit(cd, rt)
+
+    def set_keyword_related_settings(self, cooldown_sec: int, rate_per_min: int):
+        if hasattr(self, "_kw_cooldown_edit"):
+            self._kw_cooldown_edit.blockSignals(True)
+            self._kw_cooldown_edit.setText(str(int(cooldown_sec)))
+            self._kw_cooldown_edit.blockSignals(False)
+        if hasattr(self, "_kw_rate_edit"):
+            self._kw_rate_edit.blockSignals(True)
+            self._kw_rate_edit.setText(str(int(rate_per_min)))
+            self._kw_rate_edit.blockSignals(False)
+
+    def _on_kw_template_changed(self, name: str):
+        if not name:
+            return
+        self._render_kw_preview(name)
+        self.keyword_template_switch_requested.emit(name)
+
+    def _render_kw_preview(self, name: str):
+        if not hasattr(self, "_kw_preview"):
+            return
+        data = _load_settings()
+        tmpl = (data.get("keyword_templates") or {}).get(name) or {}
+        rules = tmpl.get("rules") or []
+        if not rules:
+            self._kw_preview.setPlainText("（该模板下还没有规则）")
+            return
+        lines = []
+        for r in rules:
+            kw = (r.get("keyword") or "").strip()
+            reply = (r.get("reply") or "").strip()
+            if not kw:
+                continue
+            lines.append(f"{kw} → {reply}")
+        self._kw_preview.setPlainText("\n".join(lines) if lines else "（该模板下还没有规则）")
+
+    def refresh_keyword_card(self, active_template: str = ""):
+        if not hasattr(self, "_kw_combo"):
+            return
+        data = _load_settings()
+        names = list((data.get("keyword_templates") or {}).keys())
+        self._kw_combo.blockSignals(True)
+        self._kw_combo.clear()
+        if names:
+            self._kw_combo.addItems(names)
+            target = active_template if active_template in names else names[0]
+            self._kw_combo.setCurrentText(target)
+        self._kw_combo.blockSignals(False)
+        current = self._kw_combo.currentText()
+        if current:
+            self._render_kw_preview(current)
+        else:
+            self._kw_preview.setPlainText("（还没有模板）")
+
+    # ── OBS 联动 card (status + connect btn + rules btn + cooldown) ──
+
+    def _build_obs_card(self) -> MacCard:
+        self._obs_connect_btn = MacButton("连接", variant="primary")
+        self._obs_connect_btn.setFixedSize(72, 26)
+        self._obs_connect_btn.clicked.connect(self._on_obs_connect_clicked)
+
+        card = MacCard(self, title="OBS 联动", accessory=self._obs_connect_btn)
+        body = card.body()
+
+        status_row = QHBoxLayout()
+        status_row.setSpacing(theme.SPACING_SM)
+        status_row.addWidget(QLabel("状态"))
+        self._obs_status_label = QLabel("未检测")
+        self._obs_status_label.setFont(theme.FONT_BODY)
+        status_row.addWidget(self._obs_status_label, stretch=1)
+        body.addLayout(status_row)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(theme.SPACING_SM)
+        self._obs_rules_btn = MacButton("配置规则库", variant="secondary")
+        self._obs_rules_btn.clicked.connect(self._on_obs_rules_clicked)
+        bottom_row.addWidget(self._obs_rules_btn)
+        self._obs_cooldown_label = QLabel("可触发")
+        self._obs_cooldown_label.setFont(theme.FONT_CAPTION)
+        self._obs_cooldown_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        bottom_row.addWidget(self._obs_cooldown_label, stretch=1)
+        body.addLayout(bottom_row)
+
+        return card
+
+    def _on_obs_connect_clicked(self):
+        settings = _load_settings().get("obs_actions") or {}
+        self.obs_status_check_requested.emit(settings)
+
+    def _on_obs_rules_clicked(self):
+        from ui_dialogs.obsrulesmanagerdialog import ObsRulesManagerDialog
+        data = _load_settings()
+        obs_settings = ObsActionSettings.from_dict(data.get("obs_actions"))
+        dialog = ObsRulesManagerDialog(list(obs_settings.rules), parent=self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        new_rules = dialog.get_rules()
+        # Preserve all non-rule OBS fields — replace rules only.
+        updated = ObsActionSettings(
+            enabled=obs_settings.enabled,
+            host=obs_settings.host,
+            port=obs_settings.port,
+            password=obs_settings.password,
+            main_scene=obs_settings.main_scene,
+            ignore_during_playback=obs_settings.ignore_during_playback,
+            global_cooldown_sec=obs_settings.global_cooldown_sec,
+            match_window_sec=obs_settings.match_window_sec,
+            min_hits=obs_settings.min_hits,
+            rules=tuple(new_rules),
+        )
+        data["obs_actions"] = updated.to_dict()
+        _save_settings(data)
+        self.obs_settings_changed.emit(updated.to_dict())
+
+    def attach_worker(self, worker):
+        """Hold a worker ref so the cooldown tick can poll the OBS controller.
+
+        Why: the OBS controller's global_cooldown_until is an asyncio-loop-side
+        float that we want to surface as a countdown on the home card. A 1s
+        QTimer on the Qt main thread reads it directly (lock-free atomic float).
+        """
+        self._worker = worker
+        if self._cooldown_timer is None:
+            self._cooldown_timer = QTimer(self)
+            self._cooldown_timer.setInterval(1000)
+            self._cooldown_timer.timeout.connect(self._tick_cooldown)
+            self._cooldown_timer.start()
+
+    def _tick_cooldown(self):
+        controller = getattr(self._worker, "_obs_controller", None) if self._worker else None
+        if controller is None:
+            self._obs_cooldown_label.setText("未启用")
+            return
+        remaining = controller.cooldown_remaining()
+        if remaining <= 0:
+            self._obs_cooldown_label.setText("可触发")
+        else:
+            self._obs_cooldown_label.setText(f"冷却 {remaining:.0f}s")
+
+    # ── Quick action card ─────────────────────────────────
+
+    def _build_quick_card(self) -> MacCard:
+        card = MacCard(self, title="快捷操作")
+        body = card.body()
+        for text in ("静音 AI", "暂停 AI", "切换人设", "重置冷却"):
+            btn = MacButton(text, variant="pill")
+            btn.setCheckable(True)
+            body.addWidget(btn, stretch=1)
+        self._keyword_auto_reply_btn = MacButton("启用自动回复", variant="pill")
+        self._keyword_auto_reply_btn.setCheckable(True)
+        self._keyword_auto_reply_btn.toggled.connect(self._on_keyword_pill_toggled)
+        body.addWidget(self._keyword_auto_reply_btn, stretch=1)
+        return card
+
+    def _on_keyword_pill_toggled(self, checked: bool):
+        self.keyword_auto_reply_toggled.emit(bool(checked))
+
+    def set_keyword_auto_reply_checked(self, checked: bool):
+        if hasattr(self, "_keyword_auto_reply_btn"):
+            self._keyword_auto_reply_btn.blockSignals(True)
+            self._keyword_auto_reply_btn.setChecked(bool(checked))
+            self._keyword_auto_reply_btn.blockSignals(False)
+
+    # ── Audio device card ─────────────────────────────────
+
+    def _build_audio_card(self) -> MacCard:
+        card = MacCard(self, title="音频设备")
+        body = card.body()
+
+        row = QHBoxLayout()
+        row.setSpacing(theme.SPACING_MD)
+        row.addStretch(1)
+
+        # Mic
+        mic_col = QVBoxLayout()
+        mic_col.setAlignment(Qt.AlignCenter)
+        self._mic_icon = _VolumeIcon("ic_fluent_mic_filled", mode="input", parent=self)
+        mic_col.addWidget(self._mic_icon, alignment=Qt.AlignCenter)
+        self._mic_combo = MacComboBox()
+        self._mic_combo.setMinimumWidth(180)
+        self._mic_combo.currentIndexChanged.connect(
+            lambda idx: self._on_device_combo_changed("in", idx))
+        self._mic_combo.view().entered.connect(
+            lambda i: QToolTip.showText(
+                self._mic_combo.view().viewport().mapToGlobal(
+                    self._mic_combo.view().visualRect(i).bottomLeft()),
+                self._mic_combo.itemText(i.row()), self._mic_combo))
+        mic_col.addWidget(self._mic_combo)
+        row.addLayout(mic_col)
+
+        row.addStretch(2)
+
+        # Speaker
+        spk_col = QVBoxLayout()
+        spk_col.setAlignment(Qt.AlignCenter)
+        self._spk_icon = _VolumeIcon("ic_fluent_desktop_speaker_filled", mode="loopback", parent=self)
+        spk_col.addWidget(self._spk_icon, alignment=Qt.AlignCenter)
+        self._spk_combo = MacComboBox()
+        self._spk_combo.setMinimumWidth(180)
+        self._spk_combo.currentIndexChanged.connect(
+            lambda idx: self._on_device_combo_changed("out", idx))
+        self._spk_combo.view().entered.connect(
+            lambda i: QToolTip.showText(
+                self._spk_combo.view().viewport().mapToGlobal(
+                    self._spk_combo.view().visualRect(i).bottomLeft()),
+                self._spk_combo.itemText(i.row()), self._spk_combo))
+        spk_col.addWidget(self._spk_combo)
+        row.addLayout(spk_col)
+
+        row.addStretch(1)
+        body.addLayout(row)
+        return card
+
+    # ── Audio device enumeration ──────────────────────────
+
+    def _install_hotplug_watch(self):
+        """订阅 Windows 设备插拔事件，自动刷新音频设备列表。"""
+        self._hotplug_timer = QTimer(self)
+        self._hotplug_timer.setSingleShot(True)
+        self._hotplug_timer.setInterval(250)
+        self._hotplug_timer.timeout.connect(self._on_audio_devices_hotplug)
+
+        self._hotplug_filter = _DeviceChangeFilter(self._hotplug_timer.start)
+        app = QApplication.instance()
+        if app is not None:
+            app.installNativeEventFilter(self._hotplug_filter)
+
+    def _on_audio_devices_hotplug(self):
+        """设备变更后重新枚举，并尽量按名称保持原选中。"""
+        in_name = self._mic_combo.currentText() if self._mic_combo.count() else None
+        out_name = self._spk_combo.currentText() if self._spk_combo.count() else None
+        self._load_audio_devices(preferred_in_name=in_name,
+                                  preferred_out_name=out_name)
+
+    def _load_audio_devices(self, preferred_in_name: str | None = None,
+                             preferred_out_name: str | None = None):
+        """Enumerate audio devices with multiple fallback strategies.
+
+        Order: 1) pyaudio (MME → fallback to all hostApis), 2) PyQt5 QtMultimedia,
+        3) sounddevice, 4) Windows powershell. Always shows something.
+
+        preferred_*_name 用于热插拔刷新时按名称保持原选中。
+        """
+        in_devices, out_devices, default_in_idx, default_out_idx = \
+            self._enum_via_pyaudio()
+        if not in_devices and not out_devices:
+            in_devices, out_devices = self._enum_via_qt_multimedia()
+            default_in_idx = default_out_idx = None
+        if not in_devices and not out_devices:
+            in_devices, out_devices = self._enum_via_sounddevice()
+            default_in_idx = default_out_idx = None
+
+        self._fill_device_combo(self._mic_combo, in_devices, default_in_idx,
+                                 attr="_selected_in_index",
+                                 preferred_name=preferred_in_name)
+        self._fill_device_combo(self._spk_combo, out_devices, default_out_idx,
+                                 attr="_selected_out_index",
+                                 preferred_name=preferred_out_name)
+        # 设备枚举走的是 blockSignals，combo 的 currentIndexChanged 不会触发 —
+        # 这里手动把选中的设备 idx 推给音量图标，让它们开流。
+        if hasattr(self, "_mic_icon"):
+            self._mic_icon.set_device(self._selected_in_index)
+        if hasattr(self, "_spk_icon"):
+            self._spk_icon.set_device(self._selected_out_index)
+
+    def _enum_via_pyaudio(self):
+        """Returns (in_list, out_list, default_in_idx, default_out_idx).
+
+        优先 WASAPI（Windows 真实设备名）→ DirectSound → MME。
+        过滤 "Microsoft 声音映射器" 这类 MME 虚拟聚合设备。
+        Empty lists if pyaudio missing or fails.
+        """
+        try:
+            import pyaudio
+        except ImportError:
+            return [], [], None, None
+        try:
+            p = pyaudio.PyAudio()
+        except Exception:
+            return [], [], None, None
+        try:
+            host_info = self._pick_preferred_host(p)
+            preferred_host = host_info["index"] if host_info else None
+            # 默认设备从所选 host API 内部拿，避免回退到 MME 的虚拟 Sound Mapper
+            default_in_idx = None
+            default_out_idx = None
+            if host_info is not None:
+                in_def = host_info.get("defaultInputDevice", -1)
+                out_def = host_info.get("defaultOutputDevice", -1)
+                default_in_idx = in_def if in_def not in (-1, None) else None
+                default_out_idx = out_def if out_def not in (-1, None) else None
+
+            in_devices: list[dict] = []
+            out_devices: list[dict] = []
+            in_devices_all: list[dict] = []
+            out_devices_all: list[dict] = []
+            for i in range(p.get_device_count()):
+                try:
+                    info = p.get_device_info_by_index(i)
+                except Exception:
+                    continue
+                name = str(info.get("name", f"设备 {i}"))
+                if self._is_virtual_device(name):
+                    continue
+                host_api = info.get("hostApi", -1)
+                if info.get("maxInputChannels", 0) > 0:
+                    entry = {"index": i, "name": name}
+                    in_devices_all.append(entry)
+                    if host_api == preferred_host:
+                        in_devices.append(entry)
+                if info.get("maxOutputChannels", 0) > 0:
+                    entry = {"index": i, "name": name}
+                    out_devices_all.append(entry)
+                    if host_api == preferred_host:
+                        out_devices.append(entry)
+            # 偏好 host API 没有设备时，回退到所有 host API（已过滤虚拟项）
+            if not in_devices:
+                in_devices = in_devices_all
+            if not out_devices:
+                out_devices = out_devices_all
+            return in_devices, out_devices, default_in_idx, default_out_idx
+        finally:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _pick_preferred_host(p):
+        """按 WASAPI > DirectSound > MME 顺序选 host API。
+        匹配 name 或 PortAudio type id 任一即可，避免不同 PyAudio 版本字符串差异。
+        """
+        # PortAudio host API type IDs: WASAPI=13, DirectSound=1, MME=2
+        priorities = [
+            ({"Windows WASAPI", "WASAPI"}, {13}),
+            ({"Windows DirectSound", "DirectSound"}, {1}),
+            ({"MME"}, {2}),
+        ]
+        hosts = []
+        for h in range(p.get_host_api_count()):
+            try:
+                hosts.append(p.get_host_api_info_by_index(h))
+            except Exception:
+                continue
+        for names, type_ids in priorities:
+            for info in hosts:
+                if info.get("name") in names or info.get("type") in type_ids:
+                    return info
+        return None
+
+    @staticmethod
+    def _is_virtual_device(name: str) -> bool:
+        """过滤 PortAudio 的虚拟聚合设备（Microsoft Sound Mapper 等）。"""
+        if not name:
+            return True
+        lower = name.lower()
+        return ("sound mapper" in lower
+                or "声音映射" in name
+                or "primary sound" in lower)
+
+    def _enum_via_qt_multimedia(self):
+        """PyQt5 QtMultimedia fallback. No device index needed by name only."""
+        try:
+            from PyQt5.QtMultimedia import QAudioDeviceInfo, QAudio
+        except ImportError:
+            return [], []
+        in_devices = [{"index": -1, "name": d.deviceName()}
+                      for d in QAudioDeviceInfo.availableDevices(QAudio.AudioInput)]
+        out_devices = [{"index": -1, "name": d.deviceName()}
+                       for d in QAudioDeviceInfo.availableDevices(QAudio.AudioOutput)]
+        return in_devices, out_devices
+
+    def _enum_via_sounddevice(self):
+        """sounddevice fallback."""
+        try:
+            import sounddevice as sd
+        except ImportError:
+            return [], []
+        try:
+            devices = sd.query_devices()
+        except Exception:
+            return [], []
+        in_devices = []
+        out_devices = []
+        for i, info in enumerate(devices):
+            name = str(info.get("name", f"设备 {i}"))
+            if info.get("max_input_channels", 0) > 0:
+                in_devices.append({"index": i, "name": name})
+            if info.get("max_output_channels", 0) > 0:
+                out_devices.append({"index": i, "name": name})
+        return in_devices, out_devices
+
+    def _fill_device_combo(self, combo, devices, default_idx, attr,
+                            preferred_name: str | None = None):
+        combo.blockSignals(True)
+        combo.clear()
+        if not devices:
+            combo.addItem("未检测到设备")
+            combo.blockSignals(False)
+            return
+        for d in devices:
+            combo.addItem(d["name"], d["index"])
+        selected = False
+        # 1) 优先按名称匹配 — 热插拔刷新时保留原选中
+        if preferred_name:
+            for k in range(combo.count()):
+                if combo.itemText(k) == preferred_name:
+                    combo.setCurrentIndex(k)
+                    setattr(self, attr, combo.itemData(k))
+                    selected = True
+                    break
+        # 2) 然后系统默认设备
+        if not selected and default_idx is not None:
+            for k in range(combo.count()):
+                if combo.itemData(k) == default_idx:
+                    combo.setCurrentIndex(k)
+                    setattr(self, attr, default_idx)
+                    selected = True
+                    break
+        # 3) 兜底：第一个
+        if not selected:
+            setattr(self, attr, combo.itemData(0))
+        combo.blockSignals(False)
+        combo.setToolTip(combo.currentText())
+
+    def _on_device_combo_changed(self, io_type: str, idx: int):
+        combo = self._mic_combo if io_type == "in" else self._spk_combo
+        device_index = combo.itemData(idx)
+        if device_index is not None:
+            if io_type == "in":
+                self._selected_in_index = device_index
+                if hasattr(self, "_mic_icon"):
+                    self._mic_icon.set_device(device_index)
+            else:
+                self._selected_out_index = device_index
+                if hasattr(self, "_spk_icon"):
+                    self._spk_icon.set_device(device_index)
+
+    # ── OBS state sync (push from worker) ─────────────────
+
+    def update_obs_state(self, payload: object):
+        if not isinstance(payload, dict):
+            return
+        state = str(payload.get("state", "")).strip()
+        short = str(payload.get("short_text", "")).strip()
+        message = str(payload.get("message", "")).strip()
+        if state == "connected":
+            self._obs_connect_btn.setText("已连接")
+            self._obs_connect_btn.setEnabled(False)
+        else:
+            self._obs_connect_btn.setText("连接")
+            self._obs_connect_btn.setEnabled(True)
+        self._obs_status_label.setText(short or message or "未检测")
+
+    # ── Theme hot-switch ──────────────────────────────────
+
+    def _apply_theme_styles(self):
+        """Re-apply theme-dependent styles. Called by AiszrApp._refresh_theme_styles."""
+        # Hero title — needs CLR_TEXT_PRI, not the global QLabel default (text_sec)
+        if hasattr(self, "_hero_title"):
+            self._hero_title.setStyleSheet(
+                f"color: {theme.CLR_TEXT_PRI}; background: transparent; border: none;"
+            )
+        # Propagate to every Mac* component. Some widgets (e.g. DanmakuDisplay)
+        # use the underscored `_apply_theme_styles` convention — accept either.
+        for w in self.findChildren(QWidget):
+            fn = getattr(w, "apply_theme_styles", None) or getattr(w, "_apply_theme_styles", None)
+            if callable(fn):
+                fn()
+
+    # ── Backward-compat stubs ─────────────────────────────
+
+    def update_login_state(self, state): pass
+    def update_connection_state(self, state): pass
+    def update_capture_state(self, state, msg): pass
+    def update_ai_state(self, payload): pass
+    def update_voice_state(self, payload): pass
+    def update_dh_state(self, payload): pass
+    def update_streaming_assets_state(self, payload): pass
+    def update_dashboard_metrics(self, snap): pass
+    def update_uptime_start(self, state): pass
+    def append_activity(self, msg): pass
+    def append_ai_activity(self, user, msg, reply): pass

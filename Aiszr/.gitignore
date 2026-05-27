@@ -1,0 +1,43 @@
+# Sensitive files
+auth.json
+settings.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Debug / logs
+debug_payload.log
+replay_log.jsonl
+
+# Browser data
+browser_data/
+
+# GSD / agent planning
+.planning/
+.codex/
+
+# OS
+.DS_Store
+Thumbs.db

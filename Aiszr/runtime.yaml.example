@@ -1,0 +1,20 @@
+# Runtime config example for AI digital-human live pipeline
+room_id: ""
+model_name: "rule-based"
+dedupe_window_ms: 700
+reorder_window_ms: 600
+latency_target_ms: 3000
+
+reply_min_interval_ms: 1200
+reply_user_cooldown_ms: 2500
+reply_max_chars: 80
+persona_name: "助手"
+persona_style: "热情、简洁、直播互动口吻"
+blacklist_keywords:
+  - "政治敏感"
+  - "暴力细节"
+whitelist_keywords: []
+
+tts_timeout_ms: 3000
+tts_queue_size: 200
+replay_log_path: "replay_log.jsonl"

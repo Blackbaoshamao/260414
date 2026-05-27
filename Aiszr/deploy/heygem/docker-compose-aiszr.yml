@@ -1,0 +1,43 @@
+# Aiszr 精简版 — 只起 HeyGem face2face 服务，不起 fish-speech TTS
+#
+# 为什么砍掉 fish-speech：
+#   Aiszr 已有 voiceconfigpage 那条云 TTS 链路（DeepSeek-compatible），
+#   产出的 WAV 直接喂给 HeyGem 即可，本地再起一个 Fish Speech 容器
+#   纯属浪费 30GB 镜像 + 模型加载时间 + 显存。
+#
+# 与上游 [HeyGem/deploy/docker-compose-5090.yml](HeyGem/deploy/docker-compose-5090.yml)
+# 的差异：
+#   1. 删除 duix-avatar-tts 整个 service
+#   2. 删除 ai_network（单服务不需要 bridge network）
+#   3. 其余参数（GPU runtime / PYTORCH_CUDA_ALLOC_CONF / shm_size）保持一致
+#
+# 使用：
+#   cd Aiszr/deploy/heygem
+#   docker compose -f docker-compose-aiszr.yml up -d
+#   docker compose -f docker-compose-aiszr.yml logs -f       # 看模型加载
+#   curl http://127.0.0.1:8383/easy/query?code=PROBE         # 探活
+
+services:
+  duix-avatar-gen-video:
+    image: guiji2025/duix.avatar-5090
+    container_name: duix-avatar-gen-video
+    restart: always
+    runtime: nvidia
+    privileged: true
+    volumes:
+      - d:/duix_avatar_data/face2face:/code/data
+      - ./aiszr_entry.py:/code/aiszr_entry.py:ro
+    environment:
+      # 上游默认 — 实测 2026-05-26：换 expandable_segments + TF32_OVERRIDE + LAZY
+      # 在 Blackwell sm_120 + HeyGem Cython .so 组合下 ratio 从 1:1.6 退化到 1:5.26（3x 反向）
+      # .so 里推理路径是按 max_split_size_mb:512 编译调优的，不要乱动
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    shm_size: '8g'
+    ports:
+      - '8383:8383'
+    command: python /code/aiszr_entry.py
