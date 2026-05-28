@@ -55,10 +55,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import struct
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -99,6 +100,7 @@ class StartRequest(BaseModel):
     sample_rate: int = 24000
     target_fps: int = 25
     wav_duration_ms: int = Field(..., gt=0)
+    wav_path: str = ""
 
 
 class StartResponse(BaseModel):
@@ -114,25 +116,53 @@ class _DockerBackend:
     (single worker), so no locking needed internally.
     """
 
-    def __init__(self, avatar_video_path: str, sample_rate: int, target_fps: int) -> None:
+    def __init__(self, avatar_video_path: str, sample_rate: int, target_fps: int,
+                 wav_path: str = "", wav_duration_ms: int = 0) -> None:
         import requests
+        import shutil
         self._requests = requests
         self._base = DOCKER_HEYGEM_URL.rstrip("/")
 
-        # Translate Windows path → Docker container path
-        docker_path = avatar_video_path.replace("\\", "/")
-        if WIN_DATA_PREFIX and docker_path.lower().startswith(WIN_DATA_PREFIX.lower()):
-            docker_path = DOCKER_DATA_PREFIX + docker_path[len(WIN_DATA_PREFIX):]
+        dest_dir = os.path.join(WIN_DATA_PREFIX, "temp")
+        os.makedirs(dest_dir, exist_ok=True)
+
+        logger.info("_DockerBackend wav_path={} exists={}", wav_path,
+                    os.path.isfile(wav_path) if wav_path else "N/A")
+
+        # Avatar: translate or copy to Docker mount
+        avatar_win = avatar_video_path.replace("\\", "/")
+        if WIN_DATA_PREFIX and avatar_win.lower().startswith(WIN_DATA_PREFIX.lower()):
+            docker_avatar = DOCKER_DATA_PREFIX + avatar_win[len(WIN_DATA_PREFIX):]
+        else:
+            name = os.path.basename(avatar_video_path)
+            shutil.copy2(avatar_video_path, os.path.join(dest_dir, name))
+            docker_avatar = DOCKER_DATA_PREFIX + "/temp/" + name
+
+        # WAV: translate or copy to Docker mount
+        docker_wav_path = ""
+        if wav_path and os.path.isfile(wav_path):
+            wav_win = wav_path.replace("\\", "/")
+            if WIN_DATA_PREFIX and wav_win.lower().startswith(WIN_DATA_PREFIX.lower()):
+                docker_wav_path = DOCKER_DATA_PREFIX + wav_win[len(WIN_DATA_PREFIX):]
+            else:
+                name = os.path.basename(wav_path)
+                shutil.copy2(wav_path, os.path.join(dest_dir, name))
+                docker_wav_path = DOCKER_DATA_PREFIX + "/temp/" + name
+
+        logger.info("_DockerBackend docker_avatar={} docker_wav_path={}",
+                    docker_avatar, docker_wav_path)
 
         resp = requests.post(
             f"{self._base}/aiszr/stream/start",
             json={
-                "avatar_video_path": docker_path,
+                "avatar_video_path": docker_avatar,
                 "sample_rate": sample_rate,
                 "target_fps": target_fps,
+                "wav_path": docker_wav_path,
             },
-            timeout=30,
+            timeout=60,
         )
+        logger.info("Docker /aiszr/stream/start status={} body={}", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         data = resp.json()
         self._docker_sid: str = data["session_id"]
@@ -145,23 +175,30 @@ class _DockerBackend:
             self._docker_sid, self.crop_x, self.crop_y, self.crop_w, self.crop_h,
         )
 
-    def run_chunk(self, pcm: bytes, pts_ms: int) -> tuple[np.ndarray, int, int, int, int]:
-        """Send PCM to Docker, receive mouth crop RGB back."""
+    def run_chunk(self, pcm: bytes, pts_ms: int) -> list[tuple[np.ndarray, int, int, int, int]]:
+        """Send PCM to Docker, receive N mouth crop RGB frames back."""
         resp = self._requests.post(
             f"{self._base}/aiszr/stream/{self._docker_sid}/infer",
             data=pcm,
             headers={"Content-Type": "application/octet-stream"},
-            timeout=10,
+            timeout=30,
         )
         resp.raise_for_status()
         rgb_bytes = resp.content
-        expected = self.crop_w * self.crop_h * 3
-        if len(rgb_bytes) != expected:
+        frame_size = self.crop_w * self.crop_h * 3
+        if len(rgb_bytes) == 0 or len(rgb_bytes) % frame_size != 0:
             raise ValueError(
-                f"Docker returned {len(rgb_bytes)} bytes, expected {expected}"
+                f"Docker returned {len(rgb_bytes)} bytes, not a multiple of {frame_size}"
             )
-        mouth = np.frombuffer(rgb_bytes, dtype=np.uint8).reshape(self.crop_h, self.crop_w, 3).copy()
-        return mouth, self.crop_x, self.crop_y, self.crop_w, self.crop_h
+        n_frames = len(rgb_bytes) // frame_size
+        results = []
+        for i in range(n_frames):
+            start = i * frame_size
+            mouth = np.frombuffer(
+                rgb_bytes[start:start + frame_size], dtype=np.uint8
+            ).reshape(self.crop_h, self.crop_w, 3).copy()
+            results.append((mouth, self.crop_x, self.crop_y, self.crop_w, self.crop_h))
+        return results
 
     def close(self) -> None:
         try:
@@ -231,11 +268,13 @@ def start_session(req: StartRequest) -> StartResponse:
 
     # === HeyGem 真实部署点 1：起 runtime + 加载 avatar + warmup ============
     future = state.executor.submit(
-        _DockerBackend, req.avatar_video_path, req.sample_rate, req.target_fps
+        _DockerBackend, req.avatar_video_path, req.sample_rate, req.target_fps,
+        req.wav_path, req.wav_duration_ms,
     )
     try:
-        state.backend = future.result(timeout=30)
+        state.backend = future.result(timeout=60)
     except Exception as exc:
+        logger.exception("Docker backend 启动失败")
         raise HTTPException(status_code=502, detail=f"HeyGem backend 启动失败: {exc}")
     # ======================================================================
 
@@ -286,48 +325,112 @@ async def realtime_stream(ws: WebSocket, session_id: str) -> None:
 
     logger.info("WS connected session={}", session_id[:8])
     loop = asyncio.get_running_loop()
-    try:
-        while True:
-            msg = await ws.receive_bytes()
-            if len(msg) < HEAD_UP_SIZE:
-                logger.debug("上行帧过短 {} bytes，跳过", len(msg))
+    audio_queue: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(maxsize=1)
+    stop_event = asyncio.Event()
+
+    async def receiver() -> None:
+        ws_recv_count = 0
+        try:
+            while not stop_event.is_set():
+                msg = await ws.receive_bytes()
+                if len(msg) < HEAD_UP_SIZE:
+                    continue
+                ws_recv_count += 1
+                (wrapped_pts,) = struct.unpack(HEAD_UP_FMT, msg[:HEAD_UP_SIZE])
+                pcm = msg[HEAD_UP_SIZE:]
+                if not pcm:
+                    continue
+
+                if audio_queue.full():
+                    with suppress(asyncio.QueueEmpty):
+                        audio_queue.get_nowait()
+                        audio_queue.task_done()
+                with suppress(asyncio.QueueFull):
+                    audio_queue.put_nowait((int(wrapped_pts), pcm))
+
+                if ws_recv_count == 1:
+                    logger.info("WS first chunk received session={}", session_id[:8])
+        except WebSocketDisconnect:
+            logger.info("WS disconnected session={}", session_id[:8])
+        except Exception:
+            logger.exception("WS receiver crashed session={}", session_id[:8])
+        finally:
+            stop_event.set()
+
+    async def processor() -> None:
+        frame_step_ms = max(1, int(1000 / max(state.target_fps, 1)))
+        while not stop_event.is_set():
+            try:
+                wrapped_pts, pcm = await asyncio.wait_for(audio_queue.get(), timeout=0.2)
+            except asyncio.TimeoutError:
                 continue
-            (wrapped_pts,) = struct.unpack(HEAD_UP_FMT, msg[:HEAD_UP_SIZE])
-            pcm = msg[HEAD_UP_SIZE:]
 
             try:
-                result = await loop.run_in_executor(
-                    state.executor, _heygem_inference, state, pcm, int(wrapped_pts)
-                )
-            except RuntimeError as exc:
-                # executor 已 shutdown（stop endpoint 触发）— 终止该 WS
-                logger.info("executor closed mid-stream session={}: {}",
-                            session_id[:8], exc)
+                try:
+                    result = await loop.run_in_executor(
+                        state.executor, _heygem_inference, state, pcm, wrapped_pts
+                    )
+                except RuntimeError as exc:
+                    logger.info("executor closed mid-stream session={}: {}",
+                                session_id[:8], exc)
+                    stop_event.set()
+                    break
+                except Exception:
+                    logger.exception("inference crashed pts={}", wrapped_pts)
+                    continue
+
+                if result is None:
+                    logger.warning("inference returned None, pts={}", wrapped_pts)
+                    continue
+
+                for fi, (mouth_rgb, cx, cy, cw, ch) in enumerate(result):
+                    if mouth_rgb.shape != (ch, cw, 3) or mouth_rgb.dtype != np.uint8:
+                        logger.error(
+                            "frame {} shape/dtype mismatch: {} {} expected ({},{},3) uint8",
+                            fi, mouth_rgb.shape, mouth_rgb.dtype, ch, cw,
+                        )
+                        continue
+                    if not mouth_rgb.flags["C_CONTIGUOUS"]:
+                        mouth_rgb = np.ascontiguousarray(mouth_rgb)
+
+                    state.frame_counter += 1
+                    frame_pts = (wrapped_pts + fi * frame_step_ms) % state.wav_duration_ms
+                    head = struct.pack(
+                        HEAD_DOWN_FMT,
+                        int(frame_pts),
+                        state.frame_counter,
+                        int(cx), int(cy), int(cw), int(ch),
+                    )
+                    await ws.send_bytes(head + mouth_rgb.tobytes())
+
+                if state.frame_counter <= len(result) * 2:
+                    logger.info("WS sent {} frames, pts {}..{}, session={}",
+                                len(result), wrapped_pts,
+                                (wrapped_pts + (len(result) - 1) * frame_step_ms) % state.wav_duration_ms,
+                                session_id[:8])
+            except WebSocketDisconnect:
+                logger.info("WS disconnected while sending session={}", session_id[:8])
+                stop_event.set()
                 break
-            except Exception:
-                logger.exception("inference crashed pts={}", wrapped_pts)
-                continue
-            if result is None:
-                continue
+            finally:
+                audio_queue.task_done()
 
-            mouth_rgb, cx, cy, cw, ch = result
-            if mouth_rgb.shape != (ch, cw, 3) or mouth_rgb.dtype != np.uint8:
-                logger.error(
-                    "inference 返回 shape/dtype 不符：{} {} expected ({},{},3) uint8",
-                    mouth_rgb.shape, mouth_rgb.dtype, ch, cw,
-                )
-                continue
-            if not mouth_rgb.flags["C_CONTIGUOUS"]:
-                mouth_rgb = np.ascontiguousarray(mouth_rgb)
-
-            state.frame_counter += 1
-            head = struct.pack(
-                HEAD_DOWN_FMT,
-                int(wrapped_pts),
-                state.frame_counter,
-                int(cx), int(cy), int(cw), int(ch),
-            )
-            await ws.send_bytes(head + mouth_rgb.tobytes())
+    try:
+        receiver_task = asyncio.create_task(receiver())
+        processor_task = asyncio.create_task(processor())
+        done, pending = await asyncio.wait(
+            {receiver_task, processor_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        stop_event.set()
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            with suppress(asyncio.CancelledError):
+                await task
+        for task in done:
+            with suppress(asyncio.CancelledError):
+                task.result()
     except WebSocketDisconnect:
         logger.info("WS disconnected session={}", session_id[:8])
     except Exception:
@@ -338,14 +441,18 @@ async def realtime_stream(ws: WebSocket, session_id: str) -> None:
 
 def _heygem_inference(
     state: SessionState, pcm: bytes, wrapped_pts_ms: int
-) -> Optional[tuple[np.ndarray, int, int, int, int]]:
-    """单 chunk 推理：(pcm, pts) → (mouth_rgb, crop_x, crop_y, crop_w, crop_h)。
-
-    在 session 独占 inference 线程内被调（loop.run_in_executor），返回值通过
-    await 回到 asyncio loop 由 WS writer 发出。
-    """
+) -> Optional[list[tuple[np.ndarray, int, int, int, int]]]:
+    """Batch inference: returns list of (mouth_rgb, crop_x, crop_y, crop_w, crop_h)."""
     if not pcm:
         return None
     if state.backend is None:
+        logger.warning("_heygem_inference: backend is None!")
         return None
-    return state.backend.run_chunk(pcm, wrapped_pts_ms)
+    try:
+        result = state.backend.run_chunk(pcm, wrapped_pts_ms)
+    except Exception as exc:
+        logger.exception("_heygem_inference run_chunk FAILED: {}", exc)
+        raise
+    if state.frame_counter < 3:
+        logger.info("_heygem_inference got {} frames", len(result))
+    return result

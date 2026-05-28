@@ -100,6 +100,20 @@ def _preload_avatar_frames_rgb(avatar_path: str) -> list[np.ndarray]:
     return frames
 
 
+def _feather_alpha(h: int, w: int, feather: int = 12) -> np.ndarray:
+    """Create per-pixel alpha mask with soft edges for seamless blending."""
+    if h <= 0 or w <= 0:
+        return np.ones((h, w), dtype=np.float32)
+    f = max(1, feather)
+    row = np.ones(w, dtype=np.float32)
+    row[:f] = np.linspace(0, 1, f, dtype=np.float32)
+    row[-f:] = np.linspace(1, 0, f, dtype=np.float32)
+    col = np.ones(h, dtype=np.float32)
+    col[:f] = np.linspace(0, 1, f, dtype=np.float32)
+    col[-f:] = np.linspace(1, 0, f, dtype=np.float32)
+    return col[:, np.newaxis] * row[np.newaxis, :]
+
+
 class _FramePainter(QWidget):
     """黑底 + 当前帧的 QWidget。hover 完全无反应。"""
 
@@ -230,7 +244,7 @@ class HeyGemPreviewDialog(QDialog):
             lambda: self._audio_worker.start(self._wav_path, self._out_device_index)
         )
         self._video_thread.started.connect(
-            lambda: self._video_worker.start(self._avatar_path, self._wav_duration_ms)
+            lambda: self._video_worker.start(self._avatar_path, self._wav_duration_ms, self._wav_path)
         )
 
         # ── Repaint timer ──────────────────────────────────────────────────
@@ -286,21 +300,11 @@ class HeyGemPreviewDialog(QDialog):
 
     @pyqtSlot()
     def _on_repaint_tick(self) -> None:
-        """Bug 1 修复（plan 2.6）：每 tick 至多消费一帧；超前帧原样留在 ring head。"""
         if self._closing:
             return
-        audio_pts = self._audio_worker.current_play_pts_ms()
-        # Step 1: 丢老帧（连续 popleft 直到 head 不再老）
-        while self._frame_ring and self._frame_ring[0].pts_ms < audio_pts + SYNC_WINDOW_LOWER_MS:
-            self._frame_ring.popleft()
-        # Step 2: 至多消费一帧；超前的 head 原样保留
-        chosen: LipFrame | None = None
-        if self._frame_ring:
-            head = self._frame_ring[0]
-            if head.pts_ms <= audio_pts + SYNC_WINDOW_UPPER_MS:
-                chosen = self._frame_ring.popleft()
-        if chosen is None:
+        if not self._frame_ring:
             return
+        chosen = self._frame_ring.popleft()
         try:
             composed_rgb = self._compose_frame(chosen)
             if composed_rgb is None:
@@ -312,37 +316,17 @@ class HeyGemPreviewDialog(QDialog):
         self._painter.set_frame(image)
         self._painter.update()
 
-    # ── 嘴部合成（plan 2.6 优化 R2 + R4） ──────────────────────────────────
+    # ── Frame display ──────────────────────────────────────────────────────
 
     def _compose_frame(self, lip: LipFrame) -> np.ndarray | None:
-        """把 lip.mouth_rgb 贴到本地按 pts 算出的 avatar 帧上，返回 RGB。
-
-        优化 R2: _avatar_frames 已是 RGB，无需 cvtColor。
-        优化 R4: idx 用本地 wrapped_pts × target_fps 算，不信服务端 avatar_frame_idx。
-        plan P2 守门: 越界 crop 直接返回 base 不贴嘴，不崩。
-
-        avatar_frames 为空时（cv2 没装 / 视频解码失败）返回 None — 调用方跳过该 tick。
-        """
+        h, w = lip.mouth_rgb.shape[:2]
+        # Full frame from server — use directly, no compositing
+        if lip.crop_x == 0 and lip.crop_y == 0 and h > 200 and w > 200:
+            return lip.mouth_rgb
+        # Fallback: should not happen with current server
         if not self._avatar_frames:
             return None
-        if self._wav_duration_ms <= 0:
-            return None
-        wrapped_pts = lip.pts_ms % self._wav_duration_ms
-        idx = int(wrapped_pts * self._target_fps / 1000) % len(self._avatar_frames)
-        base_rgb = self._avatar_frames[idx]
-        composed = base_rgb.copy()
-        h, w = composed.shape[:2]
-        # 边界 clip
-        x1, y1 = max(0, lip.crop_x), max(0, lip.crop_y)
-        x2 = min(w, lip.crop_x + lip.crop_w)
-        y2 = min(h, lip.crop_y + lip.crop_h)
-        if x1 >= x2 or y1 >= y2:
-            return composed
-        mx1, my1 = x1 - lip.crop_x, y1 - lip.crop_y
-        mx2 = mx1 + (x2 - x1)
-        my2 = my1 + (y2 - y1)
-        composed[y1:y2, x1:x2] = lip.mouth_rgb[my1:my2, mx1:mx2]
-        return composed
+        return lip.mouth_rgb
 
     # ── Shutdown ──────────────────────────────────────────────────────────
 

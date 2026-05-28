@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # coding=utf-8
-"""Unified Docker entry: batch (:8383) + streaming inference endpoints."""
+"""Unified Docker entry: batch (:8383) + streaming inference endpoints.
+
+Streaming uses HeyGem's own lmk blend path. The important quality detail is
+that crop_lm must be a real 68-point PFLD landmark set; a five-point SCRFD
+landmark approximation makes HeyGem's dynamic face mask degenerate.
+"""
 import os
 os.chdir('/code')
 
 import gc
 import json
-import subprocess
+import multiprocessing
 import threading
 import time
 import traceback
@@ -14,19 +19,56 @@ from enum import Enum
 
 import cv2
 import numpy as np
+import torch
 from flask import Flask, Response, request
 from service.config import result_dir, server_ip, server_port, temp_dir
 from service.self_logger import logger
-from service.trans_dh_service import (Status, TransDhTask, a, get_run_flag,
-                                       init_p, task_dic, init_wh)
+from service.trans_dh_service import (Status, TransDhTask, a, get_aud_feat1,
+                                       get_run_flag, init_p, init_wh,
+                                       task_dic)
 
 app = Flask(__name__)
 
-# GPU lock: only one inference at a time (av_transfer uses shared task_info file)
 _gpu_lock = threading.Lock()
 _stream_sessions: dict = {}
 _stream_session_seq = 0
 _stream_lock = threading.Lock()
+
+_global_model = None
+_global_lm_model = None
+
+# Dedicated audio feature extraction subprocess
+_audio_feat_q_in: multiprocessing.Queue = None
+_audio_feat_q_out: multiprocessing.Queue = None
+
+
+def _load_model():
+    global _global_model
+    if _global_model is not None:
+        return _global_model
+    from landmark2face_wy.digitalhuman_interface import DigitalHumanModel, TestOptions
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    opt = TestOptions().parse()
+    _global_model = DigitalHumanModel(opt, opt)
+    _global_model.model.netG.half().eval()
+    logger.info(f"DigitalHumanModel loaded: img_size={_global_model.img_size}")
+    return _global_model
+
+
+def _load_landmark_model():
+    global _global_lm_model
+    if _global_lm_model is not None:
+        return _global_lm_model
+    from face_detect_utils.face_detect import pfpld
+    try:
+        _global_lm_model = pfpld(False, 'face_detect_utils/resources')
+    except Exception:
+        logger.exception("PFLD CUDA landmark model load failed, retrying on CPU")
+        _global_lm_model = pfpld(True, 'face_detect_utils/resources')
+    logger.info("PFLD 68-point landmark model loaded")
+    return _global_lm_model
 
 
 # ======================================================================
@@ -170,13 +212,172 @@ def easy_query():
 
 
 # ======================================================================
-# Streaming endpoints — Aiszr real-time lip-sync
+# Streaming endpoints — Aiszr real-time lip-sync (direct netG, float16)
 # ======================================================================
+
+def _detect_face_info(scrfd, frame, img_size, pad, fallback=None):
+    bboxes, kps = scrfd.detect(frame, thresh=0.5)
+    fh, fw = frame.shape[:2]
+    if bboxes is None or len(bboxes) == 0:
+        if fallback is not None:
+            return fallback
+        logger.warning("No face detected, using center crop")
+        cx, cy = fw // 2, fh // 2
+        sz = min(fw, fh) // 4
+        return (cx - sz, cy - sz, cx + sz, cy + sz, None)
+
+    b = bboxes[0]
+    x1, y1, x2, y2 = int(b[0]), int(b[1]), int(b[2]), int(b[3])
+    cx1 = max(0, x1 - pad)
+    cy1 = max(0, y1 - pad)
+    cx2 = min(fw, x2 + pad)
+    cy2 = min(fh, y2 + pad)
+    face_kps = kps[0] if kps is not None and len(kps) > 0 else None
+    return (cx1, cy1, cx2, cy2, face_kps)
+
+
+def _fallback_crop_landmarks(out_size):
+    crop_lm = np.zeros((68, 2), dtype=np.float32)
+    xs = np.linspace(out_size * 0.16, out_size * 0.84, 17)
+    jaw_t = np.linspace(0, np.pi, 17)
+    ys = out_size * (0.36 + 0.50 * np.sin(jaw_t))
+    crop_lm[:17, 0] = xs
+    crop_lm[:17, 1] = ys
+    crop_lm[27] = (out_size * 0.50, out_size * 0.42)
+    crop_lm[28] = (out_size * 0.50, out_size * 0.50)
+    crop_lm[29] = (out_size * 0.50, out_size * 0.56)
+    crop_lm[30] = (out_size * 0.50, out_size * 0.62)
+    crop_lm[36] = (out_size * 0.35, out_size * 0.38)
+    crop_lm[45] = (out_size * 0.65, out_size * 0.38)
+    crop_lm[48] = (out_size * 0.38, out_size * 0.70)
+    crop_lm[54] = (out_size * 0.62, out_size * 0.70)
+    return crop_lm
+
+
+def _make_crop_landmarks(crop_img, lm_model):
+    try:
+        crop_lm = np.asarray(lm_model.forward(crop_img), dtype=np.float32).reshape(-1, 68, 2)[0]
+        if np.isfinite(crop_lm).all() and crop_lm.shape == (68, 2):
+            return crop_lm
+    except Exception:
+        logger.exception("PFLD landmark detection failed, using approximate landmarks")
+    return _fallback_crop_landmarks(crop_img.shape[0])
+
+
+def _make_face_data(frame, face_info, img_size, pad, lm_model):
+    cx1, cy1, cx2, cy2, _face_kps = face_info
+    crop = frame[cy1:cy2, cx1:cx2]
+    if crop.size == 0:
+        raise ValueError(f"empty face crop ({cx1},{cy1},{cx2},{cy2})")
+    out_size = img_size + 2 * pad
+    crop_img = cv2.resize(crop, (out_size, out_size), interpolation=cv2.INTER_LANCZOS4)
+    crop_lm = _make_crop_landmarks(crop_img, lm_model)
+    return {'crop_img': crop_img, 'crop_lm': crop_lm}, (cx1, cy1, cx2, cy2)
+
+
+def _make_mouth_blend_mask(crop_lm, img_size, pad):
+    mouth = np.asarray(crop_lm[48:68], dtype=np.float32).copy()
+    mouth[:, 0] -= pad
+    mouth[:, 1] -= pad
+    mouth[:, 0] = np.clip(mouth[:, 0], 0, img_size - 1)
+    mouth[:, 1] = np.clip(mouth[:, 1], 0, img_size - 1)
+
+    mask = np.zeros((img_size, img_size), dtype=np.uint8)
+    hull = cv2.convexHull(mouth.astype(np.int32))
+    cv2.fillConvexPoly(mask, hull, 255)
+
+    dilate_w = max(9, int(img_size * 0.14) | 1)
+    dilate_h = max(7, int(img_size * 0.10) | 1)
+    blur = max(7, int(img_size * 0.07) | 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_w, dilate_h))
+    mask = cv2.dilate(mask, kernel, iterations=1)
+    mask = cv2.GaussianBlur(mask, (blur, blur), 0)
+    return mask.astype(np.float32) / 255.0
+
+
+def _sharpen_mouth_region(inner_bgr, weight):
+    alpha = np.clip(weight * 1.35, 0.0, 1.0).astype(np.float32)
+    if alpha.max() <= 0:
+        return inner_bgr
+    blurred = cv2.GaussianBlur(inner_bgr, (0, 0), 0.75)
+    sharpened = cv2.addWeighted(inner_bgr, 1.45, blurred, -0.45, 0)
+    alpha = alpha[:, :, np.newaxis]
+    return np.clip(sharpened * alpha + inner_bgr * (1.0 - alpha), 0, 255).astype(np.uint8)
+
+
+def _crop_bgr_to_cuda_rgb_chw(crop_bgr):
+    crop_rgb = crop_bgr[:, :, (2, 1, 0)].transpose(2, 0, 1).copy()
+    return torch.from_numpy(crop_rgb).unsqueeze(0).float().cuda()
+
+
+def _make_direct_face_cache(model, face_data, img_size, pad):
+    crop_img = face_data['crop_img']
+    crop_lm = face_data['crop_lm']
+    inner = crop_img[pad:-pad, pad:-pad]
+    if inner.shape[:2] != (img_size, img_size):
+        inner = cv2.resize(inner, (img_size, img_size), interpolation=cv2.INTER_LANCZOS4)
+
+    inner_t = _crop_bgr_to_cuda_rgb_chw(inner)
+    mask_cuda = model.mask_cuda.repeat(1, 3, 1, 1)
+    mask_re_cuda = model.mask_re_cuda.repeat(1, 3, 1, 1)
+
+    mask_b = model.tensor_norm_no_training(inner_t, mask=mask_cuda).half()
+    b_img_re = model.tensor_norm_no_training(inner_t.clone(), mask=mask_re_cuda).half()
+    b_img_full = model.tensor_norm_no_training(inner_t.clone()).half()
+
+    weight = _make_mouth_blend_mask(crop_lm, img_size, pad)
+    weight_t = torch.from_numpy(weight).unsqueeze(0).unsqueeze(0).cuda().repeat(1, 3, 1, 1).half()
+
+    return {
+        'crop_img': crop_img,
+        'mask_b': mask_b,
+        'b_img_re': b_img_re,
+        'b_img_full': b_img_full,
+        'weight': weight_t,
+        'weight_cpu': weight,
+    }
+
+
+def _infer_face_direct(model, audio_feature, face_cache, pad):
+    lab = np.asarray(audio_feature.T, dtype=np.float32)
+    lab_t = torch.from_numpy(lab).unsqueeze(0).cuda().half()
+    with torch.no_grad():
+        fake = model.model.netG(face_cache['mask_b'], face_cache['b_img_re'], lab_t)
+        if model.nblend:
+            fake = torch.where(model.mask_re_cuda == 0, face_cache['b_img_full'], fake)
+        fused = fake * face_cache['weight'] + (1 - face_cache['weight']) * face_cache['b_img_full']
+    inner_bgr = (
+        (fused[0] * 255)
+        .permute(1, 2, 0)
+        .byte()
+        .cpu()
+        .numpy()[:, :, (2, 1, 0)]
+    )
+    inner_bgr = _sharpen_mouth_region(inner_bgr, face_cache['weight_cpu'])
+    crop_bgr = face_cache['crop_img'].copy()
+    if pad > 0:
+        crop_bgr[pad:-pad, pad:-pad] = inner_bgr
+    else:
+        crop_bgr[:, :] = inner_bgr
+    return crop_bgr
+
+
+def _pre_extract_audio_features(wav_path, fps=25):
+    """Extract wenet features for the entire WAV file via dedicated subprocess."""
+    global _audio_feat_q_in, _audio_feat_q_out
+    code = os.path.splitext(os.path.basename(wav_path))[0]
+    os.makedirs(f'/code/data/temp/{code}', exist_ok=True)
+    _audio_feat_q_in.put([code, wav_path, fps])
+    result = _audio_feat_q_out.get(timeout=120)
+    audio_npy = np.load(result[2])
+    return [audio_npy[i] for i in range(audio_npy.shape[0])]
+
 
 @app.route('/aiszr/stream/start', methods=['POST'])
 def aiszr_stream_start():
     data = json.loads(request.data)
     avatar_path = data.get('avatar_video_path', '')
+    wav_path = data.get('wav_path', '')
     sample_rate = data.get('sample_rate', 24000)
     target_fps = data.get('target_fps', 25)
 
@@ -188,64 +389,116 @@ def aiszr_stream_start():
         _stream_session_seq += 1
         sid = f"s{_stream_session_seq}"
 
-    # Run init_wh to set up face data in the worker process
-    t0 = time.time()
-    try:
-        sim = init_wh(sid, avatar_path)
-        logger.info("stream start init_wh sid={} sim={:.4f} ({:.1f}s)", sid, sim, time.time() - t0)
-    except Exception as e:
-        return json.dumps({'error': f'init_wh failed: {e}'}), 502
+    model = _load_model()
+    lm_model = _load_landmark_model()
 
-    # Detect face crop region from first frame
+    img_size = model.img_size
+    pad = int(5 * img_size / 256)
+
+    # Face detect
     cap = cv2.VideoCapture(avatar_path)
     ret, first_frame = cap.read()
     cap.release()
+    if not ret:
+        return json.dumps({'error': 'cannot read avatar video'}), 400
 
-    crop_x, crop_y, crop_w, crop_h = 220, 540, 160, 96
-    if ret:
-        frame_h, frame_w = first_frame.shape[:2]
-        try:
-            from face_detect_utils.face_detect import FaceDetect
-            fd = FaceDetect()
-            faces = fd(first_frame)
-            if faces:
-                face = faces[0]
-                landmarks = face[5] if len(face) > 5 else None
-                bbox = face[:4] if len(face) >= 4 else None
-                if bbox is not None:
-                    x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-                    face_w = x2 - x1
-                    face_h = y2 - y1
-                    mouth_y1 = y1 + int(face_h * 0.55)
-                    mouth_y2 = y2
-                    mouth_x1 = max(0, x1 - int(face_w * 0.1))
-                    mouth_x2 = min(frame_w, x2 + int(face_w * 0.1))
-                    crop_w = mouth_x2 - mouth_x1
-                    crop_h = mouth_y2 - mouth_y1
-                    crop_x = mouth_x1
-                    crop_y = mouth_y1
-        except Exception as e:
-            logger.warning("face detect fallback: {}", e)
+    from face_detect_utils.scrfd import SCRFD
+    scrfd = SCRFD('face_detect_utils/resources/scrfd_500m_bnkps_shape640x640.onnx')
+    first_face_info = _detect_face_info(scrfd, first_frame, img_size, pad)
+    cx1, cy1, cx2, cy2, _ = first_face_info
+    crop_w = cx2 - cx1
+    crop_h = cy2 - cy1
+
+    # Pre-extract audio features for the entire WAV (~2s for 90s audio)
+    audio_features = []
+    wav_exists = os.path.isfile(wav_path) if wav_path else "N/A"
+    logger.info(f"aiszr wav_path={wav_path} isfile={wav_exists}")
+    if wav_path and os.path.isfile(wav_path):
+        t0 = time.time()
+        audio_features = _pre_extract_audio_features(wav_path, fps=target_fps)
+        logger.info(f"pre-extracted {len(audio_features)} audio features in {time.time() - t0:.2f}s")
+    else:
+        logger.warning("no wav_path provided or file not found, streaming will return empty frames")
+
+    # Pre-read avatar frames and per-frame face crops for HeyGem's own lmk blend.
+    t0_frames = time.time()
+    avatar_cap = cv2.VideoCapture(avatar_path)
+    avatar_frames = []
+    face_data_list = []
+    face_boxes = []
+    last_face_info = first_face_info
+    frame_idx = 0
+    while True:
+        ret, frm = avatar_cap.read()
+        if not ret:
+            break
+        avatar_frames.append(frm)
+        if frame_idx % 6 == 0:
+            last_face_info = _detect_face_info(scrfd, frm, img_size, pad, fallback=last_face_info)
+        face_data, face_box = _make_face_data(frm, last_face_info, img_size, pad, lm_model)
+        face_data_list.append(face_data)
+        face_boxes.append(face_box)
+        frame_idx += 1
+    avatar_cap.release()
+    if not avatar_frames:
+        return json.dumps({'error': 'avatar has no frames'}), 400
+    frame_h, frame_w = avatar_frames[0].shape[:2]
+    logger.info(
+        f"pre-read {len(avatar_frames)} avatar frames and face crops "
+        f"{frame_w}x{frame_h} in {time.time() - t0_frames:.2f}s"
+    )
+
+    t0_cache = time.time()
+    direct_face_cache = []
+    try:
+        with torch.no_grad():
+            for face_data in face_data_list:
+                direct_face_cache.append(_make_direct_face_cache(model, face_data, img_size, pad))
+        logger.info(
+            f"built GPU face cache frames={len(direct_face_cache)} "
+            f"in {time.time() - t0_cache:.2f}s"
+        )
+    except Exception:
+        logger.exception("GPU face cache build failed, falling back to official lmk path")
+        direct_face_cache = []
+
+    # Warm up the fastest available path.
+    if audio_features and direct_face_cache:
+        _ = _infer_face_direct(model, audio_features[0], direct_face_cache[0], pad)
+        torch.cuda.synchronize()
+    elif audio_features and face_data_list:
+        with torch.no_grad():
+            _ = model.inference_notraining([audio_features[0]], {0: face_data_list[0]}, 1, 0, 'lmk', {}, 0)
+        torch.cuda.synchronize()
 
     _stream_sessions[sid] = {
         'avatar_path': avatar_path,
         'sample_rate': sample_rate,
         'target_fps': target_fps,
         'frame_id': 0,
-        'crop_x': crop_x,
-        'crop_y': crop_y,
-        'crop_w': crop_w,
-        'crop_h': crop_h,
         'chunk_seq': 0,
+        'cx1': cx1, 'cy1': cy1, 'cx2': cx2, 'cy2': cy2,
+        'crop_w': crop_w, 'crop_h': crop_h,
+        'img_size': img_size,
+        'pad': pad,
+        'audio_features': audio_features,
+        'avatar_frames': avatar_frames,
+        'face_data_list': face_data_list,
+        'direct_face_cache': direct_face_cache,
+        'face_boxes': face_boxes,
+        'frame_w': frame_w, 'frame_h': frame_h,
     }
-    logger.info("aiszr stream start sid={} crop=({},{},{},{})", sid, crop_x, crop_y, crop_w, crop_h)
+    logger.info(
+        f"aiszr stream start sid={sid} face=({cx1},{cy1},{cx2},{cy2}) "
+        f"frames={len(avatar_frames)} size={frame_w}x{frame_h} features={len(audio_features)}"
+    )
 
     return json.dumps({
         'session_id': sid,
-        'crop_x': crop_x,
-        'crop_y': crop_y,
-        'crop_w': crop_w,
-        'crop_h': crop_h,
+        'crop_x': 0,
+        'crop_y': 0,
+        'crop_w': frame_w,
+        'crop_h': frame_h,
     })
 
 
@@ -259,120 +512,104 @@ def aiszr_stream_infer(sid: str):
     if not pcm:
         return Response(b'', mimetype='application/octet-stream')
 
-    # Serialize: only one GPU inference at a time
     if not _gpu_lock.acquire(blocking=True, timeout=120):
         return json.dumps({'error': 'GPU busy'}), 503
 
     try:
-        return _do_infer(sess, sid, pcm)
+        return _do_infer_direct(sess, sid, pcm)
     finally:
         _gpu_lock.release()
 
 
-def _do_infer(sess, sid, pcm):
+def _do_infer_direct(sess, sid, pcm):
+    """Full-frame compositing via HeyGem's own lmk blend path."""
     sess['chunk_seq'] += 1
     chunk_seq = sess['chunk_seq']
     sample_rate = sess.get('sample_rate', 24000)
-    avatar_path = sess['avatar_path']
-
-    chunk_code = f"{sid}_c{chunk_seq}"
-    chunk_dir = os.path.join(temp_dir, chunk_code)
-    os.makedirs(chunk_dir, exist_ok=True)
-
-    audio_duration = len(pcm) / 2 / sample_rate
-
-    import wave as wave_mod
-    wav_path = os.path.join(chunk_dir, 'input.wav')
-    with wave_mod.open(wav_path, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm)
-
     target_fps = sess.get('target_fps', 25)
-    needed_frames = max(1, int(audio_duration * target_fps))
-    trimmed_path = os.path.join(chunk_dir, 'avatar_trimmed.mp4')
-    subprocess.run([
-        'ffmpeg', '-y', '-loglevel', 'error',
-        '-i', avatar_path,
-        '-vframes', str(needed_frames),
-        '-c:v', 'libx264', '-crf', '18', '-an',
-        trimmed_path,
-    ], check=True, timeout=10)
+    model = _load_model()
 
-    t0 = time.time()
-    result_avi = os.path.join(chunk_dir, 'result.avi')
-    task = TransDhTask(chunk_code, wav_path, trimmed_path, 0, 0, 0, 0)
-
-    # Run batch in background thread. We hold _gpu_lock so no other request
-    # can start until we release it (after work() finishes).
-    batch_err = [None]
-
-    def _run_batch():
-        try:
-            task.preprocess()
-            task.work()
-        except Exception as exc:
-            batch_err[0] = exc
-            logger.exception("batch failed for {}", chunk_code)
-
-    batch_thread = threading.Thread(target=_run_batch, daemon=True)
-    batch_thread.start()
-
-    # Wait for result_info — av_transfer writes it after result.avi is complete
-    result_info_path = '/code/result_info'
-    for _ in range(2400):
-        try:
-            with open(result_info_path, 'r') as f:
-                content = f.read().strip()
-            if content and chunk_code in content:
-                break
-        except Exception:
-            pass
-        time.sleep(0.05)
-
-    avi_elapsed = time.time() - t0
-
-    # Read result.avi immediately before work() cleans it up
-    crop_rgb = None
-    if os.path.isfile(result_avi) and os.path.getsize(result_avi) > 0:
-        cap = cv2.VideoCapture(result_avi)
-        ret, result_frame = cap.read()
-        cap.release()
-        if ret:
-            cx, cy = sess['crop_x'], sess['crop_y']
-            cw, ch = sess['crop_w'], sess['crop_h']
-            fh, fw = result_frame.shape[:2]
-            crop = result_frame[max(0, cy):min(fh, cy + ch), max(0, cx):min(fw, cx + cw)]
-            if crop.shape[:2] != (ch, cw):
-                crop = cv2.resize(crop, (cw, ch))
-            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-
-    # Wait for work() to finish before releasing GPU lock
-    batch_thread.join(timeout=120)
-
-    if crop_rgb is None:
-        logger.warning("no crop for {} after {:.1f}s err={}", chunk_code, avi_elapsed, batch_err[0])
+    audio_features = sess.get('audio_features', [])
+    if not audio_features:
+        if chunk_seq <= 2:
+            logger.warning(f"aiszr infer sid={sid} seq={chunk_seq} NO features, returning empty")
         return Response(b'', mimetype='application/octet-stream')
 
-    logger.info("chunk {} avi={:.1f}s dur={:.1f}s ratio=1:{:.1f}",
-                chunk_code, avi_elapsed, audio_duration, avi_elapsed / max(audio_duration, 0.1))
-    sess['frame_id'] += 1
+    chunk_duration_ms = len(pcm) / 2 / sample_rate * 1000
+    cumulative_ms = (chunk_seq - 1) * chunk_duration_ms
+    base_idx = int(cumulative_ms * target_fps / 1000) % len(audio_features)
+    n_frames = max(1, int(chunk_duration_ms * target_fps / 1000))
 
-    try:
-        import shutil
-        shutil.rmtree(chunk_dir, ignore_errors=True)
-    except Exception:
-        pass
+    frame_w = sess['frame_w']
+    frame_h = sess['frame_h']
+    frame_size = frame_w * frame_h * 3
+    avatar_frames = sess['avatar_frames']
+    face_data_list = sess['face_data_list']
+    direct_face_cache = sess.get('direct_face_cache', [])
+    face_boxes = sess['face_boxes']
 
-    return Response(crop_rgb.tobytes(), mimetype='application/octet-stream')
+    buf = bytearray(frame_size * n_frames)
+    t0 = time.time()
+    feature_indices = [(base_idx + i) % len(audio_features) for i in range(n_frames)]
+    frame_indices = [feature_idx % len(avatar_frames) for feature_idx in feature_indices]
+
+    for i in range(n_frames):
+        feature_idx = feature_indices[i]
+        frame_idx = frame_indices[i]
+        full = avatar_frames[frame_idx].copy()
+        bx1, by1, bx2, by2 = face_boxes[frame_idx]
+        bw, bh = bx2 - bx1, by2 - by1
+
+        try:
+            if direct_face_cache:
+                face_bgr = _infer_face_direct(
+                    model, audio_features[feature_idx], direct_face_cache[frame_idx], sess['pad']
+                )
+            else:
+                face_data = face_data_list[frame_idx]
+                with torch.no_grad():
+                    result = model.inference_notraining(
+                        [audio_features[feature_idx]], {0: face_data}, 1, 0, 'lmk', {}, 0
+                    )
+                face_bgr = result[0] if isinstance(result, list) else result
+                face_bgr = np.asarray(face_bgr)
+                if face_bgr.dtype != np.uint8:
+                    face_bgr = np.clip(face_bgr, 0, 255).astype(np.uint8)
+            if face_bgr.shape[:2] != (bh, bw):
+                face_bgr = cv2.resize(face_bgr, (bw, bh), interpolation=cv2.INTER_LANCZOS4)
+            # Both the GPU cache path and inference_notraining return BGR crops.
+            full[by1:by2, bx1:bx2] = face_bgr
+        except Exception:
+            if chunk_seq <= 3:
+                logger.exception(f"official lmk blend failed sid={sid} seq={chunk_seq} frame={i}")
+
+        # BGR → RGB for output
+        full_rgb = full[:, :, (2, 1, 0)]
+        off = i * frame_size
+        buf[off:off + frame_size] = full_rgb.tobytes()
+
+    sess['frame_id'] += n_frames
+    elapsed = time.time() - t0
+    if chunk_seq <= 3:
+        logger.info(
+            f"aiszr infer sid={sid} seq={chunk_seq} n_frames={n_frames} "
+            f"in {elapsed * 1000:.0f}ms ({elapsed * 1000 / n_frames:.0f}ms/frame)"
+        )
+
+    return Response(bytes(buf), mimetype='application/octet-stream')
 
 
 @app.route('/aiszr/stream/<sid>/stop', methods=['POST'])
 def aiszr_stream_stop(sid: str):
     sess = _stream_sessions.pop(sid, None)
     if sess is not None:
-        logger.info("aiszr stream stop sid={}", sid)
+        # Clear pre-extracted audio features and frame cache references.
+        sess.pop('audio_features', None)
+        sess.pop('face_data_list', None)
+        sess.pop('direct_face_cache', None)
+        sess.pop('avatar_frames', None)
+        torch.cuda.empty_cache()
+        logger.info(f"aiszr stream stop sid={sid}")
     return json.dumps({'ok': True})
 
 
@@ -381,6 +618,7 @@ def aiszr_health():
     return json.dumps({
         'ok': True,
         'streaming_sessions': len(_stream_sessions),
+        'model_loaded': _global_model is not None,
     })
 
 
@@ -394,7 +632,7 @@ if __name__ == '__main__':
     _tds.FaceDetect = FaceDetect
     _tds.pfpld = pfpld
 
-    # Optimize config for streaming: disable chaofen (super-resolution)
+    # Disable chaofen (super-resolution) for streaming performance
     import configparser
     _cfg = configparser.ConfigParser()
     _cfg.read('config/config.ini')
@@ -404,10 +642,27 @@ if __name__ == '__main__':
             _cfg.write(_f)
         logger.info("disabled chaofen in config.ini for streaming performance")
 
+    # Initialize audio models (wenet etc.) before init_p()
     a()
+    # Fork batch subprocesses before loading CUDA model
     init_p()
-    time.sleep(15)
-    logger.info("******************* Unified entry (batch+stream) starting *******************")
+
+    # Start dedicated audio feature extraction subprocess for streaming
+    _audio_feat_q_in = multiprocessing.Queue()
+    _audio_feat_q_out = multiprocessing.Queue()
+    _audio_feat_proc = multiprocessing.Process(
+        target=get_aud_feat1, args=(_audio_feat_q_in, _audio_feat_q_out),
+        daemon=True, name='aiszr_audio_feat',
+    )
+    _audio_feat_proc.start()
+    logger.info(f"audio feature subprocess started pid={_audio_feat_proc.pid}")
+
+    time.sleep(5)
+
+    # Load DINet model once
+    _load_model()
+
+    logger.info("******************* Unified entry (batch+direct-stream-f16) starting *******************")
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     if not os.path.exists(result_dir):

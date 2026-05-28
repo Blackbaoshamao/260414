@@ -1,6 +1,6 @@
 """Aiszr: Persistent browser session management and login.
 
-Uses Playwright's launch_persistent_context to maintain browser state                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+Uses Playwright's launch_persistent_context to maintain browser state
 (cookies, localStorage, etc.) across restarts without manual cookie files.
 """
 import asyncio
@@ -8,6 +8,9 @@ import os
 import shutil
 import sys
 from pathlib import Path
+
+# HeyGem 实时对口型服务地址（server.py 自动启动，固定 8770 端口）
+os.environ["AISZR_HEYGEM_URL"] = "http://localhost:8770"
 
 from playwright.async_api import async_playwright, BrowserContext
 from loguru import logger
@@ -207,8 +210,154 @@ async def startup():
     return pw, context
 
 
+def _start_heygem_server():
+    """Start deploy/heygem/server.py in background, killing any stale instance."""
+    import subprocess
+    import urllib.request
+    url = os.environ.get("AISZR_HEYGEM_URL", "")
+    if not url:
+        return
+    port = "8770"
+    if ":" in url.split("//")[-1]:
+        port = url.split(":")[-1].rstrip("/")
+    # Kill any existing server on the same port so we always load fresh code.
+    try:
+        urllib.request.urlopen(url.rstrip("/") + "/v1/health", timeout=1)
+        logger.info("HeyGem server already running on port {}, killing for restart", port)
+        import subprocess as _sp
+        _sp.run(f'for /f "tokens=5" %a in (\'netstat -aon ^| findstr :{port} ^| findstr LISTENING\') do taskkill /PID %a /F',
+                shell=True, capture_output=True, timeout=5)
+        import time; time.sleep(1)
+    except Exception:
+        pass
+    server_script = os.path.join(os.path.dirname(__file__), "deploy", "heygem", "server.py")
+    if not os.path.isfile(server_script):
+        return
+    python = sys.executable
+    log_path = os.path.join(os.path.dirname(__file__), "data", "heygem_server.log")
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    log_f = open(log_path, "w")
+    proc = subprocess.Popen(
+        [python, "-m", "uvicorn", "deploy.heygem.server:app",
+         "--host", "0.0.0.0", "--port", port, "--log-level", "info"],
+        cwd=os.path.dirname(__file__),
+        stdout=log_f,
+        stderr=log_f,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    logger.info("HeyGem server started pid={} port={} log={}", proc.pid, port, log_path)
+
+
+def _heygem_health_ok(url: str, timeout: float = 1.0) -> bool:
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        return bool(data.get("ok"))
+    except Exception:
+        return False
+
+
+def _entry_mtime_key(path: str) -> str:
+    try:
+        return str(os.path.getmtime(path))
+    except OSError:
+        return ""
+
+
+def _wait_heygem_health(url: str, timeout_sec: float = 45.0) -> bool:
+    import time
+
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if _heygem_health_ok(url, timeout=1.0):
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def _ensure_heygem_docker():
+    """Best-effort Docker runtime bootstrap for HeyGem (:8383).
+
+    Keeps normal launches fast: if the container is healthy and the mounted
+    entry file has not changed since our last compose action, do nothing.
+    When aiszr_entry.py changed, restart once so the container process reloads it.
+    """
+    import subprocess
+
+    if os.environ.get("AISZR_HEYGEM_DOCKER_AUTO", "1").lower() in {"0", "false", "no"}:
+        logger.info("HeyGem Docker auto-start disabled by AISZR_HEYGEM_DOCKER_AUTO")
+        return
+
+    root = os.path.dirname(__file__)
+    heygem_dir = os.path.join(root, "deploy", "heygem")
+    compose_path = os.path.join(heygem_dir, "docker-compose-aiszr.yml")
+    entry_path = os.path.join(heygem_dir, "aiszr_entry.py")
+    if not os.path.isfile(compose_path) or not os.path.isfile(entry_path):
+        logger.warning("HeyGem Docker files missing: {}", heygem_dir)
+        return
+
+    data_dir = os.path.join(root, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    marker_path = os.path.join(data_dir, "heygem_docker_entry_mtime.txt")
+    current_key = _entry_mtime_key(entry_path)
+    previous_key = ""
+    try:
+        with open(marker_path, "r", encoding="utf-8") as f:
+            previous_key = f.read().strip()
+    except OSError:
+        pass
+
+    health_url = os.environ.get("DOCKER_HEYGEM_HEALTH_URL", "http://127.0.0.1:8383/aiszr/health")
+    healthy = _heygem_health_ok(health_url)
+    if healthy and previous_key == current_key:
+        logger.info("HeyGem Docker already healthy at {}", health_url)
+        return
+
+    action = "restart" if healthy else "up"
+    cmd = (
+        ["docker", "compose", "-f", compose_path, "restart", "duix-avatar-gen-video"]
+        if action == "restart"
+        else ["docker", "compose", "-f", compose_path, "up", "-d"]
+    )
+    log_path = os.path.join(data_dir, "heygem_docker.log")
+    logger.info("HeyGem Docker {} starting; log={}", action, log_path)
+    try:
+        with open(log_path, "a", encoding="utf-8") as log_f:
+            log_f.write(f"\n=== heygem docker {action} ===\n")
+            result = subprocess.run(
+                cmd,
+                cwd=heygem_dir,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                timeout=90,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+    except Exception as exc:
+        logger.warning("HeyGem Docker {} failed: {}", action, exc)
+        return
+
+    if result.returncode != 0:
+        logger.warning("HeyGem Docker {} exited with code {}; see {}", action, result.returncode, log_path)
+        return
+
+    try:
+        with open(marker_path, "w", encoding="utf-8") as f:
+            f.write(current_key)
+    except OSError:
+        pass
+    if _wait_heygem_health(health_url):
+        logger.info("HeyGem Docker {} done and healthy", action)
+    else:
+        logger.warning("HeyGem Docker {} done but health check is still not ready: {}", action, health_url)
+
+
 def _run_desktop():
     """Launch Aiszr desktop application (PyQt5 + SiliconUI)."""
+    _ensure_heygem_docker()
+    _start_heygem_server()
     _install_qt_warning_filter()
 
     from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel

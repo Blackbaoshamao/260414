@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import collections
 import os
+import queue
 import struct
 import threading
 from typing import NamedTuple, Protocol, runtime_checkable
@@ -37,6 +38,8 @@ FRAME_DEQUE_MAX = 60
 
 # WS recv 兜底超时（plan 2.4 R3：close() 是主退出手段，settimeout 只为极端兜底）。
 WS_RECV_TIMEOUT_SEC = 0.5
+SEND_QUEUE_MAX = 2
+SEND_QUEUE_TIMEOUT_SEC = 0.1
 
 
 class HeyGemNotInstalledError(RuntimeError):
@@ -82,6 +85,7 @@ class HeyGemRealtimeClient(Protocol):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         target_fps: int = DEFAULT_TARGET_FPS,
         wav_duration_ms: int,
+        wav_path: str = "",
     ) -> None: ...
 
     def push_audio_chunk(self, pcm_s16le_mono: bytes, pts_ms: int) -> None: ...
@@ -103,6 +107,7 @@ class _NotInstalledHeyGemClient:
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         target_fps: int = DEFAULT_TARGET_FPS,
         wav_duration_ms: int = 0,
+        wav_path: str = "",
     ) -> None:
         raise HeyGemNotInstalledError(
             "尚未部署 HeyGem 实时 SDK，请先在 deploy/ 目录运行安装脚本"
@@ -134,9 +139,12 @@ class _RealHeyGemClient:
         self._sid: str | None = None
         self._ws = None                     # websocket.WebSocket，lazy import
         self._reader_thread: threading.Thread | None = None
+        self._sender_thread: threading.Thread | None = None
+        self._send_queue: queue.Queue[tuple[int, bytes]] = queue.Queue(maxsize=SEND_QUEUE_MAX)
         self._closing = False
         self._frame_deque: collections.deque[LipFrame] = collections.deque()
         self._deque_lock = threading.Lock()
+        self._send_failures = 0
 
         # PTS unwrap 状态（plan 2.3）
         self._wav_duration_ms: int = 0
@@ -155,6 +163,7 @@ class _RealHeyGemClient:
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         target_fps: int = DEFAULT_TARGET_FPS,
         wav_duration_ms: int,
+        wav_path: str = "",
     ) -> None:
         if wav_duration_ms <= 0:
             raise ValueError(
@@ -164,6 +173,8 @@ class _RealHeyGemClient:
         self._wav_duration_ms = wav_duration_ms
         self._latest_pushed_monotonic_pts = 0
         self._last_restored_pts = 0
+        self._send_failures = 0
+        self._clear_send_queue()
 
         # lazy import — 让没装 websocket-client 的开发机仍能用 stub 路径
         try:
@@ -195,6 +206,7 @@ class _RealHeyGemClient:
                     "sample_rate": sample_rate,
                     "target_fps": target_fps,
                     "wav_duration_ms": wav_duration_ms,
+                    "wav_path": wav_path,
                 },
                 timeout=10,
             )
@@ -226,6 +238,12 @@ class _RealHeyGemClient:
             name="heygem-ws-reader",
             daemon=True,
         )
+        self._sender_thread = threading.Thread(
+            target=self._send_loop,
+            name="heygem-ws-sender",
+            daemon=True,
+        )
+        self._sender_thread.start()
         self._reader_thread.start()
         logger.info(
             "_RealHeyGemClient started: url={} sid={} wav_duration_ms={}",
@@ -237,15 +255,46 @@ class _RealHeyGemClient:
             return
         wrapped = pts_ms % self._wav_duration_ms if self._wav_duration_ms > 0 else pts_ms
         self._latest_pushed_monotonic_pts = pts_ms
-        try:
-            from websocket import ABNF
-            self._ws.send(
-                struct.pack(">q", wrapped) + pcm_s16le_mono,
-                opcode=ABNF.OPCODE_BINARY,
-            )
-        except Exception as exc:
-            logger.warning("ws send dropped chunk pts={}: {}", pts_ms, exc)
-            # 非阻塞契约：丢就丢，不抛
+        payload = struct.pack(">q", wrapped) + pcm_s16le_mono
+        while not self._closing:
+            try:
+                self._send_queue.put_nowait((pts_ms, payload))
+                return
+            except queue.Full:
+                try:
+                    self._send_queue.get_nowait()
+                    self._send_queue.task_done()
+                except queue.Empty:
+                    return
+
+    def _send_loop(self) -> None:
+        from websocket import ABNF
+
+        while not self._closing:
+            try:
+                pts_ms, payload = self._send_queue.get(timeout=SEND_QUEUE_TIMEOUT_SEC)
+            except queue.Empty:
+                continue
+            try:
+                ws = self._ws
+                if ws is None:
+                    continue
+                ws.send(payload, opcode=ABNF.OPCODE_BINARY)
+                self._send_failures = 0
+            except Exception as exc:
+                self._send_failures += 1
+                if self._send_failures <= 3 or self._send_failures % 20 == 0:
+                    logger.warning("ws send dropped chunk pts={}: {}", pts_ms, exc)
+            finally:
+                self._send_queue.task_done()
+
+    def _clear_send_queue(self) -> None:
+        while True:
+            try:
+                self._send_queue.get_nowait()
+                self._send_queue.task_done()
+            except queue.Empty:
+                break
 
     def pull_video_frame(self) -> "LipFrame | None":
         with self._deque_lock:
@@ -263,9 +312,13 @@ class _RealHeyGemClient:
                 ws.close()
             except Exception:
                 pass
+        if self._sender_thread is not None:
+            self._sender_thread.join(timeout=2)
+            self._sender_thread = None
         if self._reader_thread is not None:
             self._reader_thread.join(timeout=2)
             self._reader_thread = None
+        self._clear_send_queue()
         # best-effort 关 session
         if self._sid is not None:
             try:
@@ -281,9 +334,11 @@ class _RealHeyGemClient:
     def close(self) -> None:
         with self._deque_lock:
             self._frame_deque.clear()
+        self._clear_send_queue()
         self._sid = None
         self._ws = None
         self._reader_thread = None
+        self._sender_thread = None
         self._owner_thread_id = None
 
     # ── 内部：reader thread & 解码 ───────────────────────────────────────

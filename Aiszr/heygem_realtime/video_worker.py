@@ -50,14 +50,15 @@ class HeyGemWorker(QObject):
         self._thread_id: int | None = None
         self._running = False
 
-    @pyqtSlot(str, int)
-    def start(self, avatar_video_path: str, wav_duration_ms: int) -> None:
+    @pyqtSlot(str, int, str)
+    def start(self, avatar_video_path: str, wav_duration_ms: int, wav_path: str = "") -> None:
         """在 worker 线程上启动 SDK。失败时 emit error 并不再继续。"""
         self._thread_id = threading.get_ident()
         self._client = self._injected_client or build_default_client()
         try:
             self._client.start(
-                avatar_video_path, wav_duration_ms=wav_duration_ms
+                avatar_video_path, wav_duration_ms=wav_duration_ms,
+                wav_path=wav_path,
             )
         except HeyGemNotInstalledError as exc:
             logger.warning("HeyGem 未部署：{}", exc)
