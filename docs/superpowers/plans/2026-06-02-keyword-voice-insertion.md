@@ -8,6 +8,8 @@
 
 **Segmentation clarification:** A single generated segment is normally treated as no split and falls back to the source WAV. The exception is a material silence trim: when long middle or trailing silence is removed, the segmenter may return one trimmed segment so the scheduler is not blocked by dead air before a keyword insertion. Material trim currently means the removed silence is at least `min_segment_ms`.
 
+`max_segments < 2` disables segmentation and trimming and returns the source WAV unchanged.
+
 **Tech Stack:** Python 3.10, asyncio, wave/PCM processing, PyQt5 signal wiring, pytest/pytest-asyncio, existing Aiszr voice provider and LiveTalking runtime abstractions.
 
 ---

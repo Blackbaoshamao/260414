@@ -119,11 +119,12 @@ def test_stereo_wav_segments_and_preserves_params(tmp_path):
     ).segment(src, output_dir)
 
     assert [path.name for path in result] == ["segment_0001.wav", "segment_0002.wav"]
-    with wave.open(str(result[0]), "rb") as wav_file:
-        assert wav_file.getnchannels() == 2
-        assert wav_file.getsampwidth() == 2
-        assert wav_file.getframerate() == 22050
-        assert wav_file.getcomptype() == "NONE"
+    for path in result:
+        with wave.open(str(path), "rb") as wav_file:
+            assert wav_file.getnchannels() == 2
+            assert wav_file.getsampwidth() == 2
+            assert wav_file.getframerate() == 22050
+            assert wav_file.getcomptype() == "NONE"
 
 
 def test_trailing_silence_is_trimmed_to_retained_silence(tmp_path):
@@ -322,7 +323,7 @@ def test_material_trim_threshold_controls_single_segment_fallback(tmp_path):
     assert result != [at_threshold]
 
 
-def test_max_segments_one_returns_source_wav(tmp_path):
+def test_max_segments_one_disables_segmentation_and_returns_source_wav(tmp_path):
     src = _write_wav(
         tmp_path / "source.wav",
         _tone_frames(2200) + _silence_frames(300) + _tone_frames(2300),

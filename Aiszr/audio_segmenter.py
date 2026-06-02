@@ -18,7 +18,6 @@ class AudioSegmenterConfig:
 class _SegmentDraft:
     chunks: list[tuple[int, int]]
     effective_frames: int
-    trailing_trimmed: bool = False
     trimmed_frames: int = 0
 
 
@@ -30,6 +29,7 @@ class AudioSegmenter:
         source = Path(wav_path)
         output = Path(output_dir)
         params, frames = self._read_pcm16_wav(source)
+        # A cap below two disables splitting/trimming and keeps the source stable.
         if self.config.max_segments < 2:
             return [source]
         segment_drafts = self._find_segment_drafts(params, frames)
@@ -134,7 +134,6 @@ class AudioSegmenter:
                 _SegmentDraft(
                     chunks=[(segment_start, end_frame)],
                     effective_frames=tail_content_end_frame - segment_start,
-                    trailing_trimmed=end_frame < params.nframes,
                     trimmed_frames=max(0, params.nframes - end_frame),
                 )
             )
@@ -164,7 +163,6 @@ class AudioSegmenter:
             if draft.effective_frames < min_segment_frames and merged:
                 merged[-1].chunks.extend(draft.chunks)
                 merged[-1].effective_frames += draft.effective_frames
-                merged[-1].trailing_trimmed = merged[-1].trailing_trimmed or draft.trailing_trimmed
                 merged[-1].trimmed_frames += draft.trimmed_frames
             else:
                 merged.append(draft)
