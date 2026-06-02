@@ -114,6 +114,7 @@ def test_short_tail_segment_is_not_emitted(tmp_path):
         )
     ).segment(src, output_dir)
 
+    assert result == [src]
     assert all(_duration_ms(path) >= 2000 for path in result)
     assert not (output_dir / "segment_0002.wav").exists()
 

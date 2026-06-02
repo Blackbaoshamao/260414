@@ -18,6 +18,7 @@ class AudioSegmenterConfig:
 class _SegmentDraft:
     chunks: list[tuple[int, int]]
     effective_frames: int
+    trailing_trimmed: bool = False
 
 
 class AudioSegmenter:
@@ -31,10 +32,7 @@ class AudioSegmenter:
         if self.config.max_segments < 2:
             return [source]
         segment_drafts = self._find_segment_drafts(params, frames)
-        if (
-            len(segment_drafts) == 1
-            and segment_drafts[0].chunks == [(0, params.nframes)]
-        ):
+        if len(segment_drafts) == 1 and not segment_drafts[0].trailing_trimmed:
             return [source]
 
         output.mkdir(parents=True, exist_ok=True)
@@ -132,6 +130,7 @@ class AudioSegmenter:
                 _SegmentDraft(
                     chunks=[(segment_start, end_frame)],
                     effective_frames=tail_content_end_frame - segment_start,
+                    trailing_trimmed=end_frame < params.nframes,
                 )
             )
 
@@ -160,6 +159,7 @@ class AudioSegmenter:
             if draft.effective_frames < min_segment_frames and merged:
                 merged[-1].chunks.extend(draft.chunks)
                 merged[-1].effective_frames += draft.effective_frames
+                merged[-1].trailing_trimmed = merged[-1].trailing_trimmed or draft.trailing_trimmed
             else:
                 merged.append(draft)
 
