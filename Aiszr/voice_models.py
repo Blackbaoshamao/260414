@@ -6,12 +6,14 @@ import uuid
 from dataclasses import dataclass, field
 
 
-VOICE_PROVIDERS = ("aliyun_bailian",)
+VOICE_PROVIDERS = ("aliyun_bailian", "local_voice")
 VOICE_PROVIDER_LABELS = {
     "aliyun_bailian": "阿里云百炼",
+    "local_voice": "GPT-SoVITS 本地语音",
 }
 VOICE_MODELS = {
     "aliyun_bailian": ("qwen3-tts-vc-2026-01-22",),
+    "local_voice": ("gpt-sovits-v2",),
 }
 
 
@@ -24,6 +26,10 @@ class VoiceProviderApiConfig:
     access_key_secret: str = ""
     endpoint: str = ""
     region: str = ""
+    reference_audio: str = ""
+    prompt_text: str = ""
+    prompt_lang: str = "zh"
+    text_lang: str = "zh"
 
     @classmethod
     def from_dict(cls, value: object) -> "VoiceProviderApiConfig":
@@ -37,6 +43,10 @@ class VoiceProviderApiConfig:
             access_key_secret=str(value.get("access_key_secret", "")).strip(),
             endpoint=str(value.get("endpoint", "")).strip(),
             region=str(value.get("region", "")).strip(),
+            reference_audio=str(value.get("reference_audio", "")).strip(),
+            prompt_text=str(value.get("prompt_text", "")).strip(),
+            prompt_lang=str(value.get("prompt_lang", "zh")).strip() or "zh",
+            text_lang=str(value.get("text_lang", "zh")).strip() or "zh",
         )
 
     def to_dict(self) -> dict:
@@ -48,6 +58,10 @@ class VoiceProviderApiConfig:
             "access_key_secret": self.access_key_secret,
             "endpoint": self.endpoint,
             "region": self.region,
+            "reference_audio": self.reference_audio,
+            "prompt_text": self.prompt_text,
+            "prompt_lang": self.prompt_lang,
+            "text_lang": self.text_lang,
         }
 
 

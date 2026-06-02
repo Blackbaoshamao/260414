@@ -25,6 +25,16 @@ _VOICE_PROVIDER_API_FIELDS = {
             "api_key": ("API Key", "请输入阿里云百炼 API Key"),
         },
     },
+    "local_voice": {
+        "hint": "GPT-SoVITS 需要先在本机启动 api_v2.py 服务，默认地址通常是 http://127.0.0.1:9880。",
+        "fields": {
+            "endpoint": ("Endpoint", "例如 http://127.0.0.1:9880"),
+            "reference_audio": ("参考音频", "可选；不克隆时使用的本地 wav 路径"),
+            "prompt_text": ("参考文本", "参考音频对应文本，可留空"),
+            "prompt_lang": ("参考语言", "默认 zh"),
+            "text_lang": ("合成语言", "默认 zh"),
+        },
+    },
 }
 _SECRET_INPUT_FIELD_KEYS = {"api_key", "api_secret", "access_key_id", "access_key_secret"}
 _BROKEN_TEXT_PLACEHOLDERS = {"?", "??", "???", "????", "?????", "??????"}
@@ -81,4 +91,3 @@ def _normalize_message_filters(value: object) -> dict[str, bool]:
 # Card dimensions for video gallery
 _CARD_W, _CARD_H = 140, 200
 STREAM_CARD_H = 200
-

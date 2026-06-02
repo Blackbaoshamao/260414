@@ -208,6 +208,10 @@ class VoiceConfigPage(SiPage):
             ("access_key_secret", "_api_access_key_secret"),
             ("endpoint", "_api_endpoint"),
             ("region", "_api_region"),
+            ("reference_audio", "_api_reference_audio"),
+            ("prompt_text", "_api_prompt_text"),
+            ("prompt_lang", "_api_prompt_lang"),
+            ("text_lang", "_api_text_lang"),
         ):
             panel, label, edit = self._create_api_field_panel("", "")
             self._api_field_panels[field_key] = panel
@@ -494,6 +498,10 @@ class VoiceConfigPage(SiPage):
         api_cfg.access_key_secret = self._api_access_key_secret.text().strip()
         api_cfg.endpoint = self._api_endpoint.text().strip()
         api_cfg.region = self._api_region.text().strip()
+        api_cfg.reference_audio = self._api_reference_audio.text().strip()
+        api_cfg.prompt_text = self._api_prompt_text.text().strip()
+        api_cfg.prompt_lang = self._api_prompt_lang.text().strip() or "zh"
+        api_cfg.text_lang = self._api_text_lang.text().strip() or "zh"
 
     def _load_provider_api_inputs(self, provider: str):
         if provider not in VOICE_PROVIDERS:
@@ -506,6 +514,10 @@ class VoiceConfigPage(SiPage):
         self._api_access_key_secret.setText(api_cfg.access_key_secret)
         self._api_endpoint.setText(api_cfg.endpoint)
         self._api_region.setText(api_cfg.region)
+        self._api_reference_audio.setText(api_cfg.reference_audio)
+        self._api_prompt_text.setText(api_cfg.prompt_text)
+        self._api_prompt_lang.setText(api_cfg.prompt_lang)
+        self._api_text_lang.setText(api_cfg.text_lang)
 
     def _apply_provider_fields(self, provider: str):
         if not self._inline_api_visible:
@@ -1086,5 +1098,4 @@ class VoiceConfigPage(SiPage):
 
     def shutdown(self) -> None:
         self._avatar_preprocessor.stop()
-
 

@@ -307,6 +307,22 @@ def _extract_response_json(resp) -> dict:
         return {"raw": getattr(resp, "text", "")}
 
 
+def _looks_like_audio_response(content: bytes, content_type: str) -> bool:
+    lower_content_type = content_type.lower()
+    if "json" in lower_content_type or content.lstrip().startswith((b"{", b"[")):
+        return False
+    header = content[:12]
+    return (
+        "audio" in lower_content_type
+        or "octet-stream" in lower_content_type
+        or header.startswith(b"RIFF")
+        or header.startswith(b"ID3")
+        or content[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")
+        or header.startswith(b"OggS")
+        or header.startswith(b"fLaC")
+    )
+
+
 class VoiceProviderBase:
     provider_name = ""
     provider_label = "语音供应商"
@@ -685,8 +701,121 @@ class AliyunBailianProvider(VoiceProviderBase):
         return VoiceActionResult(False, _friendly_provider_error("阿里云百炼", http_detail or detail))
 
 
+class LocalVoiceProvider(VoiceProviderBase):
+    provider_name = "local_voice"
+    provider_label = "GPT-SoVITS 本地语音"
+
+    def required_fields(self) -> set[str]:
+        return {"endpoint"}
+
+    def credential(self, field: str, *env_names: str) -> str:
+        if field == "endpoint":
+            return super().credential(field, "GPT_SOVITS_ENDPOINT", "LOCAL_VOICE_ENDPOINT")
+        return super().credential(field, *env_names)
+
+    async def create_clone(
+        self,
+        wav_path: str,
+        voice_id: str | None = None,
+        *,
+        model_id: str = "",
+        requested_voice_id: str = "001",
+    ) -> VoiceActionResult:
+        path = Path(wav_path).expanduser()
+        if not path.is_file():
+            return VoiceActionResult(
+                False,
+                f"GPT-SoVITS 参考音频不存在：{wav_path}",
+                clone_status="error",
+            )
+        return VoiceActionResult(
+            True,
+            "GPT-SoVITS 参考音频已就绪",
+            clone_voice_id=str(path.resolve()),
+            clone_status="ready",
+        )
+
+    async def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        output_dir: Path,
+        *,
+        model_id: str = "",
+        speed: float = DEFAULT_SPEED_RATIO,
+        volume: float = DEFAULT_VOLUME_RATIO,
+    ) -> VoiceActionResult:
+        text = str(text or "").strip()
+        if not text:
+            return VoiceActionResult(False, "合成文本为空")
+
+        ref_audio_path = str(voice_id or self.config.reference_audio).strip()
+        if not ref_audio_path:
+            return VoiceActionResult(False, "GPT-SoVITS 缺少参考音频，请先完成主播音色克隆或填写参考音频路径")
+        if not Path(ref_audio_path).expanduser().is_file():
+            return VoiceActionResult(False, f"GPT-SoVITS 参考音频不存在：{ref_audio_path}")
+
+        missing = self.missing_credentials()
+        if missing:
+            return VoiceActionResult(False, f"GPT-SoVITS 缺少必要配置：{', '.join(missing)}")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        model = model_id if model_id in self.list_models() else self.list_models()[0]
+        speed_factor = max(0.1, min(3.0, float(speed or DEFAULT_SPEED_RATIO)))
+        volume_value = max(0, min(100, round(50 * float(volume or DEFAULT_VOLUME_RATIO))))
+        output_path = _cached_synthesis_path(
+            output_dir,
+            self.provider_name,
+            model,
+            ref_audio_path,
+            text,
+            speed_factor,
+            volume_value,
+            "wav",
+        )
+        if _is_valid_audio_cache(output_path):
+            return VoiceActionResult(True, "使用缓存试听音频", output_path=str(output_path))
+
+        endpoint = self.credential("endpoint").rstrip("/")
+        payload = {
+            "text": text,
+            "text_lang": self.config.text_lang or "zh",
+            "ref_audio_path": ref_audio_path,
+            "prompt_text": self.config.prompt_text,
+            "prompt_lang": self.config.prompt_lang or "zh",
+            "text_split_method": "cut5",
+            "batch_size": 1,
+            "media_type": "wav",
+            "streaming_mode": False,
+            "speed_factor": speed_factor,
+        }
+
+        def _http_synth() -> tuple[bool, object]:
+            try:
+                import httpx
+
+                resp = httpx.post(f"{endpoint}/tts", json=payload, timeout=120.0)
+                content_type = resp.headers.get("content-type", "")
+                content = getattr(resp, "content", b"") or b""
+                if resp.status_code == 200 and content and _looks_like_audio_response(content, content_type):
+                    actual_path = _write_generated_audio(output_path, content, content_type)
+                    return True, str(actual_path)
+                data = _extract_response_json(resp)
+                detail = data.get("message") or data.get("detail") or data.get("code") or data
+                return False, f"HTTP {resp.status_code}: {detail}"
+            except Exception as exc:
+                return False, exc
+
+        ok, detail = await asyncio.to_thread(_http_synth)
+        actual_path = Path(str(detail)) if ok and detail else output_path
+        if ok and _is_valid_audio_cache(actual_path):
+            return VoiceActionResult(True, "GPT-SoVITS 语音已生成", output_path=str(actual_path))
+        return VoiceActionResult(False, f"GPT-SoVITS 请求失败：{_short_detail(detail)}")
+
+
 PROVIDER_TYPES = {
     "aliyun_bailian": AliyunBailianProvider,
+    "local_voice": LocalVoiceProvider,
 }
 
 
