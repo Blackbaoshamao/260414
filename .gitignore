@@ -25,6 +25,7 @@ node_modules/
 .claude/
 .codex/
 .codex_work/
+.worktrees/
 browser_data/
 *.lnk
 
