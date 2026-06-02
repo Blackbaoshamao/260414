@@ -116,7 +116,11 @@ class LiveTalkingRuntime:
             resolved = self._resolve_config(config)
             self._validate_config(resolved)
 
-            normalized_wav = await self._normalize_wav(wav_path, resolved) if wav_path else None
+            normalized_wav = (
+                await self._normalize_wav(wav_path, resolved)
+                if wav_path is not None
+                else None
+            )
             avatar_id = await self._ensure_avatar(resolved)
 
             await self._start_mediamtx(resolved)
