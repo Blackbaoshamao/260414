@@ -1113,10 +1113,9 @@ class CaptureWorker(QObject):
                 logger.warning("OBS: dispatch skipped — _obs_controller is None (configure 从未跑过)")
                 self._logged_obs_none_once = True
 
-        # Keyword auto-reply：只对视频号弹幕生效，命中后短路 AI Reply
+        # Keyword auto-reply: match all chat sources; text injection stays gated in dispatch.
         if (
             msg.get("type") == "chat"
-            and msg.get("source") == "wechat"
             and self._keyword_auto_reply_enabled
             and self._keyword_engine is not None
         ):
@@ -1135,9 +1134,15 @@ class CaptureWorker(QObject):
                         count = self._keyword_hit_count.get(rule.keyword, 0) + 1
                         self._keyword_hit_count[rule.keyword] = count
                         nick = str(msg.get("nickname", ""))
-                        # 异步注入到视频号助手评论框
+                        # Dispatch asynchronously; dispatch keeps WeChat text injection gated.
                         asyncio.create_task(
-                            self._dispatch_keyword_reply(rule.keyword, rule.reply, nick, count)
+                            self._dispatch_keyword_reply(
+                                rule.keyword,
+                                rule.reply,
+                                nick,
+                                count,
+                                generate_voice=bool(rule.generate_voice),
+                            )
                         )
                         return  # 短路：不再走 AI engine
                     else:
@@ -1200,7 +1205,57 @@ class CaptureWorker(QObject):
         self.ai_reply_ready.emit(result.target_user, result.target_msg, result.reply)
         self._ops_metrics.record_reply()
 
-    async def _dispatch_keyword_reply(self, keyword: str, reply: str, nickname: str, count: int):
+    async def _enqueue_keyword_voice_insertion(self, reply: str) -> bool:
+        text = str(reply or "").strip()
+        if not text:
+            logger.debug("Keyword voice insertion skipped: empty reply")
+            return False
+
+        pipeline = self._digital_human_pipeline
+        if pipeline is None:
+            logger.debug("Keyword voice insertion skipped: digital human pipeline unavailable")
+            return False
+
+        try:
+            result = await self._voice_manager.synthesize_role_to_file(text, "anchor")
+        except Exception as e:
+            logger.warning("Keyword voice insertion synthesis error: {}", e)
+            return False
+
+        output_path = getattr(result, "output_path", "")
+        if not getattr(result, "ok", False) or not output_path:
+            logger.warning(
+                "Keyword voice insertion synthesis failed: {}",
+                getattr(result, "message", ""),
+            )
+            return False
+
+        try:
+            accepted = pipeline.enqueue_insertion_audio(output_path, text=text)
+        except Exception as e:
+            logger.warning("Keyword voice insertion enqueue error: {}", e)
+            return False
+
+        if not accepted:
+            logger.debug("Keyword voice insertion rejected by queue: {}", output_path)
+            return False
+
+        logger.debug("Keyword voice insertion enqueued: {}", output_path)
+        return True
+
+    async def _dispatch_keyword_reply(
+        self,
+        keyword: str,
+        reply: str,
+        nickname: str,
+        count: int,
+        generate_voice: bool = False,
+    ):
+        if generate_voice:
+            try:
+                await self._enqueue_keyword_voice_insertion(reply)
+            except Exception as e:
+                logger.warning("Keyword voice insertion unexpected error: {}", e)
         injected = False
         if self._wechat is not None:
             try:
