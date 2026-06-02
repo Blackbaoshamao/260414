@@ -764,6 +764,14 @@ class VoiceManager:
                 voice.clone_voice_id = resolved.clone_voice_id
                 voice.clone_status = "ready"
                 voice.last_error = ""
+            elif resolved.clone_status == "training":
+                voice.clone_status = "training"
+                return VoiceActionResult(
+                    False,
+                    resolved.message,
+                    clone_voice_id=resolved.clone_voice_id or voice.clone_voice_id,
+                    clone_status="training",
+                )
             else:
                 if resolved.clone_status:
                     voice.clone_status = resolved.clone_status
