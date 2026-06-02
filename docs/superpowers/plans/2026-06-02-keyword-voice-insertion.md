@@ -6,6 +6,8 @@
 
 **Architecture:** Add an audio segmenter and speech scheduler in front of LiveTalking. The digital-human pipeline generates one full anchor WAV, splits it into short WAV segments, then loops those segments while allowing keyword reply WAVs to be inserted after the current segment finishes. Voice settings are snapshotted at stream start so insertion audio uses the same provider and anchor voice as the running stream.
 
+**Segmentation clarification:** A single generated segment is normally treated as no split and falls back to the source WAV. The exception is a material trailing-silence trim: when the source ends with long silence, the segmenter may return one trimmed segment so the scheduler is not blocked by dead air before a keyword insertion.
+
 **Tech Stack:** Python 3.10, asyncio, wave/PCM processing, PyQt5 signal wiring, pytest/pytest-asyncio, existing Aiszr voice provider and LiveTalking runtime abstractions.
 
 ---
