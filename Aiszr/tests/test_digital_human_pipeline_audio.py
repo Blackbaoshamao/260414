@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -87,9 +88,11 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
     pipeline = _pipeline()
     video = tmp_path / "anchor.mp4"
     segment = tmp_path / "segment.wav"
+    second_segment = tmp_path / "segment_2.wav"
     manual = tmp_path / "manual.wav"
     video.write_bytes(b"video")
     segment.write_bytes(b"RIFFxxxxWAVE")
+    second_segment.write_bytes(b"RIFFxxxxWAVE")
     manual.write_bytes(b"RIFFxxxxWAVE")
     normalized = tmp_path / "normalized.wav"
     normalized.write_bytes(b"RIFFxxxxWAVE")
@@ -158,7 +161,7 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
             ok=True,
             message="ok",
             source_path=tmp_path / "full.wav",
-            segments=[segment],
+            segments=[segment, second_segment],
         )
 
     async def fake_configure_obs(_config, stream_url):
@@ -187,7 +190,7 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
     assert wav_path is None
     assert loop_audio is False
     scheduler = scheduler_instances[0]
-    assert scheduler.anchor_segments == [segment]
+    assert scheduler.anchor_segments == [second_segment, segment]
     assert scheduler.log_callback is pipeline._log
     assert scheduler.initial_delay_path == segment
     assert scheduler.started is True
@@ -195,6 +198,79 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
     await scheduler.send_wav(manual)
 
     assert runtime.sent_audio == [(9009, normalized), (9009, normalized)]
+
+
+@pytest.mark.asyncio
+async def test_run_livetalking_cleans_up_runtime_when_first_audio_send_fails(
+    monkeypatch, tmp_path
+):
+    pipeline = _pipeline()
+    video = tmp_path / "anchor.mp4"
+    segment = tmp_path / "segment.wav"
+    video.write_bytes(b"video")
+    segment.write_bytes(b"RIFFxxxxWAVE")
+    events = []
+
+    class FakeRuntime:
+        async def start(self, _runtime_config, wav_path=None, *, loop_audio=True):
+            return {"ok": True, "rtmp_url": "rtmp://127.0.0.1:1935/live/test", "listen_port": 9011}
+
+        async def _normalize_wav(self, wav_path, _runtime_config):
+            return Path(wav_path)
+
+        async def send_audio_once(self, port, wav_path):
+            events.append(("send", port, wav_path))
+            raise RuntimeError("upload failed")
+
+        async def stop(self):
+            events.append("runtime.stop")
+
+    async def fake_prepare(_config):
+        return SimpleNamespace(ok=True, message="ok", source_path=segment, segments=[segment])
+
+    monkeypatch.setattr(pipeline, "_prepare_anchor_segments", fake_prepare)
+    monkeypatch.setattr(livetalking_runtime, "LiveTalkingRuntime", lambda **_kwargs: FakeRuntime())
+
+    with pytest.raises(RuntimeError, match="upload failed"):
+        await pipeline._run_livetalking(PipelineConfig(video_path=str(video), output_dir=str(tmp_path)))
+
+    assert events == [("send", 9011, segment), "runtime.stop"]
+    assert pipeline._speech_scheduler is None
+    assert pipeline._livetalking_runtime is None
+
+
+@pytest.mark.asyncio
+async def test_speech_scheduler_done_callback_sets_error_and_cleans_runtime():
+    pipeline = _pipeline()
+    events = []
+
+    class FakeScheduler:
+        async def stop(self):
+            events.append("scheduler.stop")
+
+    class FakeRuntime:
+        async def stop(self):
+            events.append("runtime.stop")
+
+    async def fail_scheduler():
+        raise RuntimeError("scheduler failed")
+
+    pipeline._speech_scheduler = FakeScheduler()
+    pipeline._livetalking_runtime = FakeRuntime()
+
+    task = asyncio.create_task(fail_scheduler())
+    await asyncio.sleep(0)
+    pipeline._on_speech_scheduler_done(task)
+
+    for _ in range(20):
+        if events:
+            break
+        await asyncio.sleep(0.01)
+
+    assert pipeline.state is dhp.PipelineState.ERROR
+    assert events == ["scheduler.stop", "runtime.stop"]
+    assert pipeline._speech_scheduler is None
+    assert pipeline._livetalking_runtime is None
 
 
 @pytest.mark.asyncio

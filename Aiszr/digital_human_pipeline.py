@@ -236,19 +236,23 @@ class DigitalHumanPipeline:
             normalized_wav = await runtime._normalize_wav(str(path), runtime_config)
             await runtime.send_audio_once(listen_port, normalized_wav)
 
-        first_segment = Path(anchor_audio.segments[0])
-        await send_scheduler_wav(first_segment)
-
-        self._speech_scheduler = DigitalHumanSpeechScheduler(
-            anchor_segments=anchor_audio.segments,
-            send_wav=send_scheduler_wav,
-            log_callback=self._log,
-            initial_delay_path=first_segment,
-        )
-        scheduler_task = self._speech_scheduler.start()
-        scheduler_task.add_done_callback(self._on_speech_scheduler_done)
-
         try:
+            first_segment = Path(anchor_audio.segments[0])
+            scheduler_segments = [Path(path) for path in anchor_audio.segments]
+            if len(scheduler_segments) > 1:
+                scheduler_segments = scheduler_segments[1:] + scheduler_segments[:1]
+
+            await send_scheduler_wav(first_segment)
+
+            self._speech_scheduler = DigitalHumanSpeechScheduler(
+                anchor_segments=scheduler_segments,
+                send_wav=send_scheduler_wav,
+                log_callback=self._log,
+                initial_delay_path=first_segment,
+            )
+            scheduler_task = self._speech_scheduler.start()
+            scheduler_task.add_done_callback(self._on_speech_scheduler_done)
+
             self._set_state(PipelineState.CONFIGURING_OBS)
             stream_url = runtime_result.get("rtmp_url", config.livetalking_push_url)
             obs_result = await self._configure_obs(config, stream_url)
