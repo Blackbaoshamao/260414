@@ -143,6 +143,56 @@ def test_short_tail_before_trailing_silence_is_merged(tmp_path):
     assert not (output_dir / "segment_0002.wav").exists()
 
 
+def test_max_segments_cap_preserves_remaining_audio(tmp_path):
+    src = _write_wav(
+        tmp_path / "source.wav",
+        _tone_frames(2200)
+        + _silence_frames(300)
+        + _tone_frames(2200)
+        + _silence_frames(300)
+        + _tone_frames(2200)
+        + _silence_frames(300)
+        + _tone_frames(2200),
+    )
+    output_dir = tmp_path / "segments"
+
+    result = AudioSegmenter(
+        AudioSegmenterConfig(
+            silence_threshold_db=-25,
+            min_segment_ms=2000,
+            min_silence_ms=50,
+            scan_step_ms=10,
+            max_retained_silence_ms=100,
+            max_segments=2,
+        )
+    ).segment(src, output_dir)
+
+    assert [path.name for path in result] == ["segment_0001.wav", "segment_0002.wav"]
+    assert _duration_ms(result[1]) > 6500
+
+
+def test_middle_long_silence_drops_excess_from_next_segment(tmp_path):
+    src = _write_wav(
+        tmp_path / "source.wav",
+        _tone_frames(2200) + _silence_frames(3000) + _tone_frames(2200),
+    )
+    output_dir = tmp_path / "segments"
+
+    result = AudioSegmenter(
+        AudioSegmenterConfig(
+            silence_threshold_db=-25,
+            min_segment_ms=2000,
+            min_silence_ms=50,
+            scan_step_ms=10,
+            max_retained_silence_ms=1000,
+        )
+    ).segment(src, output_dir)
+
+    assert [path.name for path in result] == ["segment_0001.wav", "segment_0002.wav"]
+    assert 3150 <= _duration_ms(result[0]) <= 3250
+    assert 2150 <= _duration_ms(result[1]) <= 2250
+
+
 def test_max_segments_one_returns_source_wav(tmp_path):
     src = _write_wav(
         tmp_path / "source.wav",

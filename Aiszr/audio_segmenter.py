@@ -67,7 +67,7 @@ class AudioSegmenter:
             params.framerate * self.config.max_retained_silence_ms // 1000,
         )
 
-        cuts: list[int] = []
+        ranges: list[tuple[int, int, int]] = []
         segment_start = 0
         silence_start: int | None = None
         cursor = 0
@@ -88,11 +88,13 @@ class AudioSegmenter:
                 silence_frames = cursor - silence_start
                 segment_frames = silence_start - segment_start
                 if silence_frames >= min_silence_frames and segment_frames >= min_segment_frames:
-                    cut_frame = silence_start + min(silence_frames, retained_silence_frames)
-                    cuts.append(cut_frame)
-                    segment_start = cut_frame
-                    if len(cuts) >= self.config.max_segments - 1:
-                        break
+                    if len(ranges) < self.config.max_segments - 1:
+                        range_end = silence_start + min(
+                            silence_frames,
+                            retained_silence_frames,
+                        )
+                        ranges.append((segment_start, range_end, range_end))
+                        segment_start = cursor
                 silence_start = None
 
             cursor += step_frames
@@ -101,54 +103,40 @@ class AudioSegmenter:
             silence_frames = params.nframes - silence_start
             segment_frames = silence_start - segment_start
             if silence_frames >= min_silence_frames and (
-                segment_frames >= min_segment_frames or cuts
+                segment_frames >= min_segment_frames or ranges
             ):
                 end_frame = silence_start + min(silence_frames, retained_silence_frames)
                 tail_content_end_frame = silence_start
 
-        ranges = self._ranges_from_cuts(cuts, end_frame)
+        if segment_start < end_frame:
+            ranges.append((segment_start, end_frame, tail_content_end_frame))
+
         return self._merge_short_tail_ranges(
             ranges,
             params.nframes,
             min_segment_frames,
-            tail_content_end_frame,
         )
-
-    def _ranges_from_cuts(self, cuts: list[int], end_frame: int) -> list[tuple[int, int]]:
-        ranges: list[tuple[int, int]] = []
-        start = 0
-        for cut in cuts:
-            if start < cut < end_frame:
-                ranges.append((start, cut))
-                start = cut
-        if start < end_frame:
-            ranges.append((start, end_frame))
-        return ranges
 
     def _merge_short_tail_ranges(
         self,
-        ranges: list[tuple[int, int]],
+        ranges: list[tuple[int, int, int]],
         source_end_frame: int,
         min_segment_frames: int,
-        tail_content_end_frame: int,
     ) -> list[tuple[int, int]]:
         if not ranges:
             return [(0, source_end_frame)]
 
-        merged: list[tuple[int, int]] = []
-        for index, (start_frame, end_frame) in enumerate(ranges):
-            effective_end_frame = end_frame
-            if index == len(ranges) - 1:
-                effective_end_frame = min(end_frame, tail_content_end_frame)
+        merged: list[tuple[int, int, int]] = []
+        for start_frame, end_frame, effective_end_frame in ranges:
             if effective_end_frame - start_frame < min_segment_frames and merged:
-                previous_start, _ = merged[-1]
-                merged[-1] = (previous_start, end_frame)
+                previous_start, _, _ = merged[-1]
+                merged[-1] = (previous_start, end_frame, effective_end_frame)
             else:
-                merged.append((start_frame, end_frame))
+                merged.append((start_frame, end_frame, effective_end_frame))
 
         if not merged:
             return [(0, source_end_frame)]
-        return merged
+        return [(start_frame, end_frame) for start_frame, end_frame, _ in merged]
 
     def _window_dbfs(
         self,
