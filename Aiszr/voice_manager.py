@@ -249,7 +249,8 @@ def _decode_audio_data(value: str) -> bytes:
 
 
 def _role_speed_ratio(role: VoiceRoleConfig | None = None) -> float:
-    return DEFAULT_SPEED_RATIO
+    multiplier = (role.speed / 100.0) if role else 1.0
+    return max(0.0, min(2.0, DEFAULT_SPEED_RATIO * multiplier))
 
 
 def _role_volume_ratio(role: VoiceRoleConfig | None = None) -> float:
@@ -760,6 +761,15 @@ class VoiceManager:
         provider = self.provider()
         if voice.clone_status == "training":
             resolved = await provider.resolve_clone(voice.clone_voice_id)
+            if not resolved.ok:
+                voice.clone_status = "error"
+                voice.last_error = resolved.message
+                return VoiceActionResult(
+                    False,
+                    resolved.message,
+                    clone_voice_id=resolved.clone_voice_id or voice.clone_voice_id,
+                    clone_status="error",
+                )
             if resolved.clone_status == "ready":
                 if resolved.clone_voice_id:
                     voice.clone_voice_id = resolved.clone_voice_id
@@ -773,12 +783,9 @@ class VoiceManager:
                     clone_voice_id=resolved.clone_voice_id or voice.clone_voice_id,
                     clone_status="training",
                 )
-            elif not resolved.ok:
-                voice.clone_status = resolved.clone_status or "error"
-                voice.last_error = resolved.message
-                return resolved
             elif resolved.clone_status:
                 voice.clone_status = resolved.clone_status
+                voice.last_error = resolved.message
                 return VoiceActionResult(
                     False,
                     resolved.message,
@@ -786,8 +793,13 @@ class VoiceManager:
                     clone_status=resolved.clone_status,
                 )
             else:
-                voice.clone_status = "ready"
-                voice.last_error = ""
+                voice.clone_status = "training"
+                return VoiceActionResult(
+                    False,
+                    resolved.message,
+                    clone_voice_id=resolved.clone_voice_id or voice.clone_voice_id,
+                    clone_status="training",
+                )
 
         result = await provider.synthesize(
             text=text,
