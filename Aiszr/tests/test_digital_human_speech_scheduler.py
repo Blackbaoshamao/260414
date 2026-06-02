@@ -7,6 +7,14 @@ import pytest
 from digital_human_speech_scheduler import DigitalHumanSpeechScheduler, wav_duration_sec
 
 
+async def _wait_until_done(task: asyncio.Task, timeout: float = 0.5) -> None:
+    async def _wait():
+        while not task.done():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_wait(), timeout=timeout)
+
+
 @pytest.mark.asyncio
 async def test_insertion_waits_for_current_anchor_before_next_anchor():
     sent = []
@@ -101,13 +109,40 @@ async def test_stop_cleans_up_after_anchor_failure_without_reraising():
     )
 
     task = scheduler.start()
-    while not task.done():
-        await asyncio.sleep(0.01)
+    await _wait_until_done(task)
 
     await scheduler.stop()
 
     assert scheduler._task is None
     assert any("anchor send failed" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_start_after_failed_task_replaces_and_consumes_old_task():
+    calls = 0
+    second_start_sent = asyncio.Event()
+
+    async def send_wav(_wav_path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("anchor failed")
+        second_start_sent.set()
+
+    scheduler = DigitalHumanSpeechScheduler(
+        anchor_segments=["a.wav"],
+        send_wav=send_wav,
+        duration_fn=lambda _path: 0.05,
+    )
+
+    failed_task = scheduler.start()
+    await _wait_until_done(failed_task)
+    restarted_task = scheduler.start()
+    try:
+        assert restarted_task is not failed_task
+        await asyncio.wait_for(second_start_sent.wait(), timeout=0.5)
+    finally:
+        await scheduler.stop()
 
 
 @pytest.mark.asyncio

@@ -52,8 +52,10 @@ class DigitalHumanSpeechScheduler:
         self._anchor_index = 0
 
     def start(self) -> asyncio.Task[None]:
-        if self._task is not None and not self._task.done():
-            return self._task
+        if self._task is not None:
+            if not self._task.done():
+                return self._task
+            self._consume_done_task_exception(self._task)
 
         self._stop_event = asyncio.Event()
         self._task = asyncio.create_task(
@@ -74,6 +76,8 @@ class DigitalHumanSpeechScheduler:
             await task
 
     def enqueue_insertion(self, wav_path, *, text: str = "") -> bool:
+        # Same-event-loop API: callers from other threads must marshal this call
+        # via the scheduler loop, for example with loop.call_soon_threadsafe().
         insertion = _Insertion(str(wav_path), text)
         try:
             self._insertions.put_nowait(insertion)
@@ -128,7 +132,7 @@ class DigitalHumanSpeechScheduler:
             await asyncio.wait_for(
                 self._stop_event.wait(), timeout=max(duration, MIN_WAIT_SEC)
             )
-        except TimeoutError:
+        except asyncio.TimeoutError:
             pass
 
     def _duration_sec(self, wav_path) -> float:
@@ -156,3 +160,9 @@ class DigitalHumanSpeechScheduler:
                     close()
                 return
             loop.create_task(result)
+
+    def _consume_done_task_exception(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        with contextlib.suppress(Exception):
+            task.exception()
