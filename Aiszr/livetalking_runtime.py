@@ -87,7 +87,7 @@ def find_single_wav(folder_path: str) -> Path | None:
 
 
 class LiveTalkingRuntime:
-    """Starts MediaMTX and LiveTalking, then loops one WAV through /humanaudio."""
+    """Starts MediaMTX and LiveTalking, with optional WAV upload looping."""
 
     SESSION_ID = "0"
 
@@ -104,32 +104,41 @@ class LiveTalkingRuntime:
         self._pump_tasks: list[asyncio.Task] = []
         self._stop_event = asyncio.Event()
 
-    async def start(self, config: LiveTalkingRuntimeConfig, wav_path: str) -> dict:
+    async def start(
+        self,
+        config: LiveTalkingRuntimeConfig,
+        wav_path: str | None = None,
+        *,
+        loop_audio: bool = True,
+    ) -> dict:
         self._stop_event.clear()
         try:
             resolved = self._resolve_config(config)
             self._validate_config(resolved)
 
-            normalized_wav = await self._normalize_wav(wav_path, resolved)
+            normalized_wav = await self._normalize_wav(wav_path, resolved) if wav_path else None
             avatar_id = await self._ensure_avatar(resolved)
 
             await self._start_mediamtx(resolved)
             await self._start_livetalking(resolved, avatar_id)
             await self._wait_until_ready(resolved.listen_port)
 
-            # Send once before returning so the UI does not enter STREAMING while
-            # LiveTalking is still rejecting audio uploads.
-            await self._send_audio_once(resolved.listen_port, normalized_wav)
-            self._audio_loop_task = asyncio.create_task(
-                self._loop_audio(resolved.listen_port, normalized_wav, wait_first=True)
-            )
-            self._audio_loop_task.add_done_callback(self._on_audio_loop_done)
+            if normalized_wav is not None:
+                # Send once before returning so the UI does not enter STREAMING while
+                # LiveTalking is still rejecting audio uploads.
+                await self.send_audio_once(resolved.listen_port, normalized_wav)
+                if loop_audio:
+                    self._audio_loop_task = asyncio.create_task(
+                        self._loop_audio(resolved.listen_port, normalized_wav, wait_first=True)
+                    )
+                    self._audio_loop_task.add_done_callback(self._on_audio_loop_done)
             self._log(f"LiveTalking RTMP: {resolved.push_url}")
             return {
                 "ok": True,
                 "rtmp_url": resolved.push_url,
-                "audio_path": str(normalized_wav),
+                "audio_path": str(normalized_wav) if normalized_wav is not None else "",
                 "avatar_id": avatar_id,
+                "listen_port": resolved.listen_port,
             }
         except Exception:
             with contextlib.suppress(Exception):
@@ -403,11 +412,11 @@ class LiveTalkingRuntime:
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self._stop_event.wait(), timeout=max(0.5, duration))
             while not self._stop_event.is_set():
-                await self._send_audio_once(port, wav_path, client=client)
+                await self.send_audio_once(port, wav_path, client=client)
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self._stop_event.wait(), timeout=max(0.5, duration))
 
-    async def _send_audio_once(
+    async def send_audio_once(
         self,
         port: int,
         wav_path: Path,
@@ -431,6 +440,15 @@ class LiveTalkingRuntime:
         finally:
             if owns_client:
                 await client.aclose()
+
+    async def _send_audio_once(
+        self,
+        port: int,
+        wav_path: Path,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        await self.send_audio_once(port, wav_path, client=client)
 
     def _on_audio_loop_done(self, task: asyncio.Task) -> None:
         if task.cancelled() or self._stop_event.is_set():

@@ -36,3 +36,43 @@ def test_resolve_config_uses_local_default_paths():
     assert resolved.push_url == "rtmp://127.0.0.1:1935/live/aiszr"
     assert resolved.listen_port == 8010
     assert resolved.modelres == 384
+
+
+async def test_start_can_skip_fixed_audio_loop(monkeypatch):
+    runtime = LiveTalkingRuntime()
+    config = LiveTalkingRuntimeConfig(
+        listen_port=8123,
+        push_url="rtmp://127.0.0.1:1935/live/test",
+        avatar_id="avatar-test",
+    )
+    send_calls = []
+
+    async def fake_ensure_avatar(_config):
+        return "avatar-test"
+
+    async def fake_start_mediamtx(_config):
+        return None
+
+    async def fake_start_livetalking(_config, _avatar_id):
+        return None
+
+    async def fake_wait_until_ready(_port):
+        return None
+
+    async def fake_send_audio_once(port, wav_path, *, client=None):
+        send_calls.append((port, wav_path, client))
+
+    monkeypatch.setattr(runtime, "_resolve_config", lambda _config: config)
+    monkeypatch.setattr(runtime, "_validate_config", lambda _config: None)
+    monkeypatch.setattr(runtime, "_ensure_avatar", fake_ensure_avatar)
+    monkeypatch.setattr(runtime, "_start_mediamtx", fake_start_mediamtx)
+    monkeypatch.setattr(runtime, "_start_livetalking", fake_start_livetalking)
+    monkeypatch.setattr(runtime, "_wait_until_ready", fake_wait_until_ready)
+    monkeypatch.setattr(runtime, "send_audio_once", fake_send_audio_once, raising=False)
+
+    result = await runtime.start(config, None, loop_audio=False)
+
+    assert result["ok"] is True
+    assert result["listen_port"] == 8123
+    assert send_calls == []
+    assert runtime._audio_loop_task is None
