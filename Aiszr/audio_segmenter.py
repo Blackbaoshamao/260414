@@ -14,6 +14,12 @@ class AudioSegmenterConfig:
     max_segments: int = 300
 
 
+@dataclass
+class _SegmentDraft:
+    chunks: list[tuple[int, int]]
+    effective_frames: int
+
+
 class AudioSegmenter:
     def __init__(self, config: AudioSegmenterConfig | None = None) -> None:
         self.config = config or AudioSegmenterConfig()
@@ -24,24 +30,28 @@ class AudioSegmenter:
         params, frames = self._read_pcm16_wav(source)
         if self.config.max_segments < 2:
             return [source]
-        ranges = self._find_segment_ranges(params, frames)
-        if ranges == [(0, params.nframes)]:
+        segment_drafts = self._find_segment_drafts(params, frames)
+        if (
+            len(segment_drafts) == 1
+            and segment_drafts[0].chunks == [(0, params.nframes)]
+        ):
             return [source]
 
         output.mkdir(parents=True, exist_ok=True)
         bytes_per_frame = params.nchannels * params.sampwidth
         segments: list[Path] = []
 
-        for index, (start_frame, end_frame) in enumerate(ranges, start=1):
+        for index, draft in enumerate(segment_drafts, start=1):
             segment_path = output / f"segment_{index:04d}.wav"
-            start_byte = start_frame * bytes_per_frame
-            end_byte = end_frame * bytes_per_frame
             with wave.open(str(segment_path), "wb") as wav_file:
                 wav_file.setnchannels(params.nchannels)
                 wav_file.setsampwidth(params.sampwidth)
                 wav_file.setframerate(params.framerate)
                 wav_file.setcomptype(params.comptype, params.compname)
-                wav_file.writeframes(frames[start_byte:end_byte])
+                for start_frame, end_frame in draft.chunks:
+                    start_byte = start_frame * bytes_per_frame
+                    end_byte = end_frame * bytes_per_frame
+                    wav_file.writeframes(frames[start_byte:end_byte])
             segments.append(segment_path)
 
         return segments
@@ -57,7 +67,11 @@ class AudioSegmenter:
             raise ValueError("Only PCM16 WAV files are supported") from exc
         return params, frames
 
-    def _find_segment_ranges(self, params: wave._wave_params, frames: bytes) -> list[tuple[int, int]]:
+    def _find_segment_drafts(
+        self,
+        params: wave._wave_params,
+        frames: bytes,
+    ) -> list[_SegmentDraft]:
         bytes_per_frame = params.nchannels * params.sampwidth
         step_frames = max(1, params.framerate * self.config.scan_step_ms // 1000)
         min_silence_frames = max(1, math.ceil(params.framerate * self.config.min_silence_ms / 1000))
@@ -67,7 +81,7 @@ class AudioSegmenter:
             params.framerate * self.config.max_retained_silence_ms // 1000,
         )
 
-        ranges: list[tuple[int, int, int]] = []
+        drafts: list[_SegmentDraft] = []
         segment_start = 0
         silence_start: int | None = None
         cursor = 0
@@ -88,12 +102,17 @@ class AudioSegmenter:
                 silence_frames = cursor - silence_start
                 segment_frames = silence_start - segment_start
                 if silence_frames >= min_silence_frames and segment_frames >= min_segment_frames:
-                    if len(ranges) < self.config.max_segments - 1:
+                    if len(drafts) < self.config.max_segments - 1:
                         range_end = silence_start + min(
                             silence_frames,
                             retained_silence_frames,
                         )
-                        ranges.append((segment_start, range_end, range_end))
+                        drafts.append(
+                            _SegmentDraft(
+                                chunks=[(segment_start, range_end)],
+                                effective_frames=range_end - segment_start,
+                            )
+                        )
                         segment_start = cursor
                 silence_start = None
 
@@ -103,40 +122,55 @@ class AudioSegmenter:
             silence_frames = params.nframes - silence_start
             segment_frames = silence_start - segment_start
             if silence_frames >= min_silence_frames and (
-                segment_frames >= min_segment_frames or ranges
+                segment_frames >= min_segment_frames or drafts
             ):
                 end_frame = silence_start + min(silence_frames, retained_silence_frames)
                 tail_content_end_frame = silence_start
 
         if segment_start < end_frame:
-            ranges.append((segment_start, end_frame, tail_content_end_frame))
+            drafts.append(
+                _SegmentDraft(
+                    chunks=[(segment_start, end_frame)],
+                    effective_frames=tail_content_end_frame - segment_start,
+                )
+            )
 
-        return self._merge_short_tail_ranges(
-            ranges,
+        return self._merge_short_tail_drafts(
+            drafts,
             params.nframes,
             min_segment_frames,
         )
 
-    def _merge_short_tail_ranges(
+    def _merge_short_tail_drafts(
         self,
-        ranges: list[tuple[int, int, int]],
+        drafts: list[_SegmentDraft],
         source_end_frame: int,
         min_segment_frames: int,
-    ) -> list[tuple[int, int]]:
-        if not ranges:
-            return [(0, source_end_frame)]
+    ) -> list[_SegmentDraft]:
+        if not drafts:
+            return [
+                _SegmentDraft(
+                    chunks=[(0, source_end_frame)],
+                    effective_frames=source_end_frame,
+                )
+            ]
 
-        merged: list[tuple[int, int, int]] = []
-        for start_frame, end_frame, effective_end_frame in ranges:
-            if effective_end_frame - start_frame < min_segment_frames and merged:
-                previous_start, _, _ = merged[-1]
-                merged[-1] = (previous_start, end_frame, effective_end_frame)
+        merged: list[_SegmentDraft] = []
+        for draft in drafts:
+            if draft.effective_frames < min_segment_frames and merged:
+                merged[-1].chunks.extend(draft.chunks)
+                merged[-1].effective_frames += draft.effective_frames
             else:
-                merged.append((start_frame, end_frame, effective_end_frame))
+                merged.append(draft)
 
         if not merged:
-            return [(0, source_end_frame)]
-        return [(start_frame, end_frame) for start_frame, end_frame, _ in merged]
+            return [
+                _SegmentDraft(
+                    chunks=[(0, source_end_frame)],
+                    effective_frames=source_end_frame,
+                )
+            ]
+        return merged
 
     def _window_dbfs(
         self,

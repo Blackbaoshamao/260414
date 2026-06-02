@@ -193,6 +193,32 @@ def test_middle_long_silence_drops_excess_from_next_segment(tmp_path):
     assert 2150 <= _duration_ms(result[1]) <= 2250
 
 
+def test_short_tail_merge_does_not_restore_trimmed_middle_silence(tmp_path):
+    src = _write_wav(
+        tmp_path / "source.wav",
+        _tone_frames(2200)
+        + _silence_frames(3000)
+        + _tone_frames(100)
+        + _silence_frames(3000),
+    )
+    output_dir = tmp_path / "segments"
+
+    result = AudioSegmenter(
+        AudioSegmenterConfig(
+            silence_threshold_db=-25,
+            min_segment_ms=2000,
+            min_silence_ms=50,
+            scan_step_ms=10,
+            max_retained_silence_ms=100,
+        )
+    ).segment(src, output_dir)
+
+    assert [path.name for path in result] == ["segment_0001.wav"]
+    assert result != [src]
+    assert 2400 <= _duration_ms(result[0]) <= 2600
+    assert not (output_dir / "segment_0002.wav").exists()
+
+
 def test_max_segments_one_returns_source_wav(tmp_path):
     src = _write_wav(
         tmp_path / "source.wav",
