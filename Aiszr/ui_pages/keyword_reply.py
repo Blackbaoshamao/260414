@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtGui import QIntValidator
+from PyQt5.QtGui import QFont, QIntValidator
 from PyQt5.QtWidgets import (
     QLabel, QTextEdit, QWidget, QHBoxLayout, QVBoxLayout,
     QGridLayout, QSizePolicy, QScrollArea, QFrame,
@@ -108,13 +108,21 @@ class KeywordReplyPage(SiPage):
         title_wrap.setStyleSheet("background: transparent;")
         title_layout = QHBoxLayout(title_wrap)
         title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(10)
+        title_layout.setSpacing(8)
+        self._hero_title_accent = QFrame(title_wrap)
+        self._hero_title_accent.setObjectName("KeywordHeroTitleAccent")
+        self._hero_title_accent.setFixedSize(4, 26)
+        title_layout.addWidget(self._hero_title_accent)
         self._hero_title = QLabel("关键词回复")
-        self._hero_title.setFont(theme.FONT_TITLE_1)
+        title_font = QFont(theme.FONT_TITLE_1)
+        title_font.setPointSize(20)
+        title_font.setWeight(QFont.DemiBold)
+        title_font.setLetterSpacing(QFont.PercentageSpacing, 100)
+        self._hero_title.setFont(title_font)
         title_layout.addWidget(self._hero_title)
         self._hero_badge = QLabel("视频号")
         self._hero_badge.setObjectName("KeywordHeroBadge")
-        self._hero_badge.setFixedHeight(22)
+        self._hero_badge.setFixedHeight(24)
         self._hero_badge.setAlignment(Qt.AlignCenter)
         title_layout.addWidget(self._hero_badge)
         title_layout.addStretch(1)
@@ -140,17 +148,25 @@ class KeywordReplyPage(SiPage):
 
     def _apply_hero_styles(self):
         if hasattr(self, "_hero_bar"):
-            border = theme._mix_hex_colors(theme.CLR_HAIRLINE, theme.CLR_TEXT_PRI, 0.08)
             self._hero_bar.setStyleSheet(
                 f"QFrame#KeywordHeroBar {{"
                 f"background-color: {theme.CLR_BG_CARD};"
-                f"border: 1px solid {border};"
+                f"border: none;"
                 f"border-radius: {theme.RADIUS_LG}px;"
                 f"}}"
             )
         if hasattr(self, "_hero_divider"):
             self._hero_divider.setStyleSheet(
                 f"QFrame#KeywordHeroDivider {{ background-color: {theme.CLR_HAIRLINE}; border: none; }}"
+            )
+        if hasattr(self, "_hero_title_accent"):
+            accent = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_TEXT_PRI, 0.06)
+            self._hero_title_accent.setStyleSheet(
+                f"QFrame#KeywordHeroTitleAccent {{"
+                f"background-color: {accent};"
+                f"border: none;"
+                f"border-radius: 2px;"
+                f"}}"
             )
         if hasattr(self, "_hero_title"):
             self._hero_title.setStyleSheet(
@@ -164,8 +180,8 @@ class KeywordReplyPage(SiPage):
                 f"background-color: {badge_bg};"
                 f"color: {theme.CLR_ACCENT};"
                 f"border: 1px solid {badge_border};"
-                f"border-radius: 10px;"
-                f"padding: 1px 9px;"
+                f"border-radius: 12px;"
+                f"padding: 2px 10px;"
                 f"font-weight: 600;"
                 f"}}"
             )
@@ -279,25 +295,24 @@ class KeywordReplyPage(SiPage):
     def _build_rules_card(self) -> MacCard:
         card = MacCard(self, title="关键词规则", subtitle="命中后直接注入视频号评论框")
         body = card.body()
-        body.setSpacing(10)
+        body.setSpacing(12)
 
         ops = QHBoxLayout()
         ops.setSpacing(theme.SPACING_SM)
-        add_btn = MacButton("+ 添加一行", variant="primary")
-        add_btn.setFixedSize(112, 32)
+        add_btn = MacButton("+ 添加规则", variant="primary")
+        add_btn.setFixedSize(118, 32)
         add_btn.clicked.connect(self._add_rule)
         ops.addWidget(add_btn)
 
         self._rules_summary_label = QLabel("0 条规则")
         self._rules_summary_label.setFont(theme.FONT_CAPTION)
-        self._rules_summary_label.setStyleSheet(
-            f"color: {theme.CLR_TEXT_SEC}; background: transparent; border: none;"
-        )
+        self._rules_summary_label.setFixedHeight(26)
+        self._rules_summary_label.setStyleSheet(self._rules_summary_stylesheet())
         ops.addWidget(self._rules_summary_label)
         ops.addStretch(1)
 
-        self._save_btn = MacButton("保存", variant="primary")
-        self._save_btn.setFixedSize(80, 32)
+        self._save_btn = MacButton("保存修改", variant="primary")
+        self._save_btn.setFixedSize(92, 32)
         self._save_btn.clicked.connect(self._persist)
         ops.addWidget(self._save_btn)
         body.addLayout(ops)
@@ -305,7 +320,7 @@ class KeywordReplyPage(SiPage):
         rules_wrap = QWidget(card)
         self._rules_layout = QVBoxLayout(rules_wrap)
         self._rules_layout.setContentsMargins(0, 0, 0, 0)
-        self._rules_layout.setSpacing(8)
+        self._rules_layout.setSpacing(12)
         self._rules_layout.setAlignment(Qt.AlignTop)
         rules_wrap.setStyleSheet("background: transparent;")
 
@@ -315,9 +330,45 @@ class KeywordReplyPage(SiPage):
         self._rules_scroll.setFrameShape(QFrame.NoFrame)
         self._rules_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._rules_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._rules_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._rules_scroll.setStyleSheet(self._rules_scroll_stylesheet())
         body.addWidget(self._rules_scroll)
         return card
+
+    def _rules_summary_stylesheet(self) -> str:
+        bg = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_BG_CARD, 0.52)
+        border = theme._mix_hex_colors(theme.CLR_HAIRLINE, theme.CLR_ACCENT, 0.12)
+        return (
+            f"QLabel {{"
+            f"color: {theme.CLR_TEXT_SEC};"
+            f"background-color: {bg};"
+            f"border: 1px solid {border};"
+            f"border-radius: 13px;"
+            f"padding: 3px 11px;"
+            f"}}"
+        )
+
+    def _rules_scroll_stylesheet(self) -> str:
+        handle = theme._mix_hex_colors(theme.CLR_BORDER, theme.CLR_TEXT_PRI, 0.10)
+        handle_hover = theme._mix_hex_colors(theme.CLR_BORDER, theme.CLR_ACCENT, 0.22)
+        return (
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: transparent; width: 6px; margin: 2px 0 2px 0; }"
+            f"QScrollBar::handle:vertical {{ background: {handle}; border-radius: 3px; min-height: 28px; }}"
+            f"QScrollBar::handle:vertical:hover {{ background: {handle_hover}; }}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        )
+
+    def _voice_toggle_stylesheet(self) -> str:
+        bg = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_BG_CARD, 0.40)
+        border = theme._mix_hex_colors(theme.CLR_BORDER, theme.CLR_TEXT_PRI, 0.04)
+        return (
+            f"QFrame#KeywordVoiceToggle {{"
+            f"background-color: {bg};"
+            f"border: 1px solid {border};"
+            f"border-radius: 16px;"
+            f"}}"
+        )
 
     # 规则区按内容收缩；规则很多时才在内部滚动，避免截图里的大面积空白。
     _CHROME_OFFSET = 198
@@ -328,7 +379,7 @@ class KeywordReplyPage(SiPage):
         sa = getattr(self, "scroll_area", None)
         avail = sa.height() if sa is not None and sa.height() > 0 else 600
         row_count = max(1, len(self._rule_widgets))
-        desired = row_count * 118 + 16
+        desired = row_count * 138 + 16
         max_height = max(260, avail - self._CHROME_OFFSET)
         self._rules_scroll.setFixedHeight(max(150, min(desired, max_height)))
 
@@ -349,20 +400,20 @@ class KeywordReplyPage(SiPage):
     def _make_rule_widget(self, rule: KeywordRule | None = None) -> tuple[QFrame, dict]:
         card = QFrame(self)
         card.setObjectName("KeywordRuleRow")
-        card.setFixedHeight(110)
+        card.setFixedHeight(126)
         self._apply_rule_row_style(card)
         body = QVBoxLayout(card)
-        body.setSpacing(6)
-        body.setContentsMargins(12, 9, 12, 9)
+        body.setSpacing(9)
+        body.setContentsMargins(14, 12, 14, 10)
 
         top_row_widget = QWidget(card)
-        top_row_widget.setFixedHeight(36)
+        top_row_widget.setFixedHeight(34)
         top_row = QHBoxLayout(top_row_widget)
         top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(theme.SPACING_SM)
+        top_row.setSpacing(10)
 
         kw_edit = MacLineEdit(placeholder="关键词")
-        kw_edit.setFixedSize(220, 32)
+        kw_edit.setFixedSize(240, 32)
         if rule:
             kw_edit.setText(rule.keyword)
         kw_edit.textChanged.connect(lambda _: self._set_dirty(True))
@@ -379,13 +430,18 @@ class KeywordReplyPage(SiPage):
         mode_combo.currentIndexChanged.connect(lambda _: self._set_dirty(True))
         top_row.addWidget(mode_combo)
 
-        voice_cluster = QWidget(card)
+        voice_cluster = QFrame(card)
+        voice_cluster.setObjectName("KeywordVoiceToggle")
         voice_cluster.setFixedHeight(32)
+        voice_cluster.setStyleSheet(self._voice_toggle_stylesheet())
         voice_layout = QHBoxLayout(voice_cluster)
-        voice_layout.setContentsMargins(0, 0, 0, 0)
+        voice_layout.setContentsMargins(10, 0, 8, 0)
         voice_layout.setSpacing(theme.SPACING_XS)
         voice_label = QLabel("语音")
-        voice_label.setFont(theme.FONT_BODY)
+        voice_label.setFont(theme.FONT_CAPTION)
+        voice_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_SEC}; background: transparent; border: none;"
+        )
         voice_layout.addWidget(voice_label)
         voice_switch = SiSwitch(voice_cluster)
         if rule:
@@ -396,23 +452,23 @@ class KeywordReplyPage(SiPage):
 
         top_row.addStretch(1)
 
-        del_btn = MacButton("删除", variant="destructive")
-        del_btn.setFixedSize(64, 28)
+        del_btn = MacButton("删除", variant="secondary")
+        del_btn.setFixedSize(58, 30)
         top_row.addWidget(del_btn)
         body.addWidget(top_row_widget)
 
         reply_edit = QTextEdit()
         reply_edit.setPlaceholderText("回复话术")
-        reply_edit.setFixedHeight(38)
+        reply_edit.setFixedHeight(46)
         reply_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         reply_edit.setStyleSheet(_build_text_area_stylesheet(
-            radius=theme.RADIUS_MD, padding="4px 8px"))
+            radius=theme.RADIUS_MD, padding="8px 10px"))
         if rule:
             reply_edit.setPlainText(rule.reply)
         reply_edit.textChanged.connect(lambda: self._set_dirty(True))
         body.addWidget(reply_edit)
 
-        hit_label = QLabel("未启用")
+        hit_label = QLabel("命中 0 次")
         hit_label.setFont(theme.FONT_CAPTION)
         hit_label.setStyleSheet(
             f"color: {theme.CLR_TEXT_TERT}; background: transparent; border: none;"
@@ -427,11 +483,18 @@ class KeywordReplyPage(SiPage):
         return card, widgets
 
     def _apply_rule_row_style(self, card: QFrame):
+        bg = theme._mix_hex_colors(theme.CLR_BG_CARD, theme.CLR_BG_ELEVATED, 0.38)
+        hover = theme._mix_hex_colors(bg, theme.CLR_ACCENT, 0.04)
+        border = theme._mix_hex_colors(theme.CLR_BORDER, theme.CLR_ACCENT, 0.08)
         card.setStyleSheet(
             f"QFrame#KeywordRuleRow {{"
-            f"background-color: {theme.CLR_BG_ELEVATED};"
-            f"border: 1px solid {theme.CLR_HAIRLINE};"
+            f"background-color: {bg};"
+            f"border: 1px solid {border};"
             f"border-radius: {theme.RADIUS_MD}px;"
+            f"}}"
+            f"QFrame#KeywordRuleRow:hover {{"
+            f"background-color: {hover};"
+            f"border-color: {theme.CLR_BORDER};"
             f"}}"
         )
 
@@ -693,15 +756,17 @@ class KeywordReplyPage(SiPage):
         if hasattr(self, "_hero_title"):
             self._apply_hero_styles()
         if hasattr(self, "_rules_summary_label"):
-            self._rules_summary_label.setStyleSheet(
-                f"color: {theme.CLR_TEXT_SEC}; background: transparent; border: none;"
-            )
+            self._rules_summary_label.setStyleSheet(self._rules_summary_stylesheet())
+        if hasattr(self, "_rules_scroll"):
+            self._rules_scroll.setStyleSheet(self._rules_scroll_stylesheet())
         for w in self.findChildren(QWidget):
             fn = getattr(w, "apply_theme_styles", None)
             if callable(fn):
                 fn()
         for frame in self.findChildren(QFrame, "KeywordRuleRow"):
             self._apply_rule_row_style(frame)
+        for frame in self.findChildren(QFrame, "KeywordVoiceToggle"):
+            frame.setStyleSheet(self._voice_toggle_stylesheet())
         for frame in self.findChildren(QFrame, "KeywordEmptyState"):
             frame.setStyleSheet(
                 f"QFrame#KeywordEmptyState {{ background-color: {theme.CLR_BG_ELEVATED}; "
@@ -714,4 +779,4 @@ class KeywordReplyPage(SiPage):
             )
         for te in self.findChildren(QTextEdit):
             te.setStyleSheet(_build_text_area_stylesheet(
-                radius=theme.RADIUS_MD, padding="4px 8px"))
+                radius=theme.RADIUS_MD, padding="8px 10px"))

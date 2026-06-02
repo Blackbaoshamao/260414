@@ -310,17 +310,20 @@ class HomePage(SiPage):
         self._monitor_slot = QVBoxLayout()
         grid.addLayout(self._monitor_slot, 0, 0, 1, 2)
 
-        # ② Right column (rowspan=2): 推流控制(4) + 音频设备(2) + 快捷操作(4)
+        # Right column: 快捷操作 + 音频设备 + 关键词回复
         right_col = QVBoxLayout()
         right_col.setSpacing(theme.SPACING_MD)
-        right_col.addWidget(self._build_stream_card(), stretch=4)
+        right_col.addWidget(self._build_quick_card(), stretch=3)
         right_col.addWidget(self._build_audio_card(), stretch=2)
-        right_col.addWidget(self._build_quick_card(), stretch=4)
+        right_col.addWidget(self._build_keyword_card(), stretch=5)
         grid.addLayout(right_col, 0, 2, 2, 1)
 
-        # ③-④ Bottom row
-        grid.addWidget(self._build_keyword_card(), 1, 0)
-        grid.addWidget(self._build_obs_card(), 1, 1)
+        # Bottom row: OBS 联动 + 推流控制, split evenly inside the left span.
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(theme.SPACING_MD)
+        bottom_row.addWidget(self._build_obs_card(), stretch=1)
+        bottom_row.addWidget(self._build_stream_card(), stretch=1)
+        grid.addLayout(bottom_row, 1, 0, 1, 2)
 
         outer.addLayout(grid, stretch=1)
         self.setAttachment(root)
@@ -351,6 +354,21 @@ class HomePage(SiPage):
 
     def set_live_page(self, live_page):
         live_page.setParent(self)
+        live_scroll = getattr(live_page, "scroll_area", None)
+        if live_scroll is not None:
+            if hasattr(live_scroll, "setVerticalScrollBarPolicy"):
+                live_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                live_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            else:
+                for name in (
+                    "scroll_bar_frame_vertical",
+                    "scroll_bar_frame_horizontal",
+                    "scroll_bar_vertical",
+                    "scroll_bar_horizontal",
+                ):
+                    bar = getattr(live_scroll, name, None)
+                    if bar is not None:
+                        bar.hide()
         self._monitor_slot.addWidget(live_page)
 
     # ── Hero ───────────────────────────────────────────────
@@ -409,16 +427,27 @@ class HomePage(SiPage):
     # ── Stream control card ───────────────────────────────
 
     def _build_stream_card(self) -> MacCard:
-        card = MacCard(self, title="推流控制")
+        card = MacCard(self, padding=(16, 10, 16, 10))
         body = card.body()
+        body.setSpacing(6)
+
+        title = QLabel("推流控制")
+        title.setFont(theme.FONT_BODY_EMPH)
+        title.setStyleSheet(
+            f"color: {theme.CLR_TEXT_PRI}; border: none; background: transparent;"
+        )
+        body.addWidget(title)
+
         self._stream_asset_label = QLabel("主播形象：未选择")
         self._stream_asset_label.setWordWrap(True)
+        self._stream_asset_label.setFont(theme.FONT_CAPTION)
         self._stream_asset_label.setStyleSheet(
             f"color: {theme.CLR_TEXT_SEC}; border: none; background: transparent;"
         )
         body.addWidget(self._stream_asset_label)
         self._stream_state_label = QLabel("推流：空闲")
         self._stream_state_label.setWordWrap(True)
+        self._stream_state_label.setFont(theme.FONT_CAPTION)
         self._stream_state_label.setStyleSheet(
             f"color: {theme.CLR_TEXT_SEC}; border: none; background: transparent;"
         )
