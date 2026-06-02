@@ -18,11 +18,13 @@ async def _wait_until_done(task: asyncio.Task, timeout: float = 0.5) -> None:
 @pytest.mark.asyncio
 async def test_insertion_waits_for_current_anchor_before_next_anchor():
     sent = []
+    received_paths = []
     first_anchor_sent = asyncio.Event()
     insertion_sent = asyncio.Event()
     second_anchor_sent = asyncio.Event()
 
     async def send_wav(wav_path):
+        received_paths.append(wav_path)
         filename = Path(wav_path).name
         sent.append(filename)
         if filename == "a.wav":
@@ -50,6 +52,7 @@ async def test_insertion_waits_for_current_anchor_before_next_anchor():
         await scheduler.stop()
 
     assert sent[:3] == ["a.wav", "insert.wav", "b.wav"]
+    assert all(isinstance(path, Path) for path in received_paths[:3])
 
 
 def test_enqueue_insertion_returns_false_when_queue_is_full():

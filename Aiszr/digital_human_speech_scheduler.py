@@ -12,7 +12,7 @@ MIN_WAIT_SEC = 0.05
 
 @dataclass(frozen=True)
 class _Insertion:
-    wav_path: str
+    wav_path: Path
     text: str
 
 
@@ -37,7 +37,7 @@ class DigitalHumanSpeechScheduler:
         log_callback: Callable[[str], object] | None = None,
         max_insertions: int = 20,
     ):
-        self._anchor_segments = list(anchor_segments)
+        self._anchor_segments = [Path(path) for path in anchor_segments]
         if not self._anchor_segments:
             raise ValueError("anchor_segments must not be empty")
 
@@ -78,7 +78,7 @@ class DigitalHumanSpeechScheduler:
     def enqueue_insertion(self, wav_path, *, text: str = "") -> bool:
         # Same-event-loop API: callers from other threads must marshal this call
         # via the scheduler loop, for example with loop.call_soon_threadsafe().
-        insertion = _Insertion(str(wav_path), text)
+        insertion = _Insertion(Path(wav_path), text)
         try:
             self._insertions.put_nowait(insertion)
         except asyncio.QueueFull:
