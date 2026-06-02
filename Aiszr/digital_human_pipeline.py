@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -13,8 +13,11 @@ from typing import Callable
 
 from loguru import logger
 
+from audio_segmenter import AudioSegmenter
+from digital_human_speech_scheduler import DigitalHumanSpeechScheduler
 from ffmpeg_ops import check_ffmpeg_available
 from obs_actions import ObsDigitalHumanConfigurator, ObsWebSocketClient
+from voice_manager import VoiceActionResult
 
 
 class PipelineState(Enum):
@@ -61,6 +64,14 @@ class PipelineConfig:
     livetalking_modelres: int = 384
 
 
+@dataclass(slots=True)
+class AnchorAudioResult:
+    ok: bool
+    message: str = ""
+    source_path: Path | None = None
+    segments: list[Path] = field(default_factory=list)
+
+
 class DigitalHumanPipeline:
     """Orchestrates LiveTalking wav2lip RTMP output and OBS config."""
 
@@ -79,6 +90,7 @@ class DigitalHumanPipeline:
         self._http_server: HTTPServer | None = None
         self._http_thread: Thread | None = None
         self._livetalking_runtime = None
+        self._speech_scheduler = None
         self._cancel_event = asyncio.Event()
 
     @property
@@ -144,6 +156,11 @@ class DigitalHumanPipeline:
                 await asyncio.wait_for(self._ffmpeg_proc.wait(), timeout=5)
             self._ffmpeg_proc = None
 
+        if self._speech_scheduler:
+            with contextlib.suppress(Exception):
+                await self._speech_scheduler.stop()
+            self._speech_scheduler = None
+
         if self._livetalking_runtime:
             with contextlib.suppress(Exception):
                 await self._livetalking_runtime.stop()
@@ -175,14 +192,11 @@ class DigitalHumanPipeline:
             return {"ok": False, "message": f"主播视频不存在: {config.video_path!r}"}
 
         self._set_state(PipelineState.LIVETALKING_PREPARING)
-        audio_result = await self._resolve_livetalking_audio(config)
-        if not audio_result.ok:
+        anchor_audio = await self._prepare_anchor_segments(config)
+        if not anchor_audio.ok:
             self._set_state(PipelineState.ERROR)
-            self._log(f"LiveTalking 音频准备失败: {audio_result.message}")
-            return {"ok": False, "message": f"LiveTalking 音频准备失败: {audio_result.message}"}
-        if not audio_result.output_path or not Path(audio_result.output_path).is_file():
-            self._set_state(PipelineState.ERROR)
-            return {"ok": False, "message": f"音频文件不存在: {audio_result.output_path!r}"}
+            self._log(f"LiveTalking 音频准备失败: {anchor_audio.message}")
+            return {"ok": False, "message": f"LiveTalking 音频准备失败: {anchor_audio.message}"}
         if self._cancel_event.is_set():
             return self._cancel_result()
 
@@ -210,7 +224,8 @@ class DigitalHumanPipeline:
         try:
             runtime_result = await self._livetalking_runtime.start(
                 runtime_config,
-                audio_result.output_path,
+                None,
+                loop_audio=False,
             )
         except Exception:
             with contextlib.suppress(Exception):
@@ -219,6 +234,16 @@ class DigitalHumanPipeline:
             raise
         if self._cancel_event.is_set():
             return self._cancel_result()
+
+        listen_port = int(runtime_result.get("listen_port") or config.livetalking_listen_port)
+        self._speech_scheduler = DigitalHumanSpeechScheduler(
+            anchor_segments=anchor_audio.segments,
+            send_wav=lambda path: self._livetalking_runtime.send_audio_once(
+                listen_port, Path(path)
+            ),
+            log_callback=self._log,
+        )
+        self._speech_scheduler.start()
 
         self._set_state(PipelineState.CONFIGURING_OBS)
         stream_url = runtime_result.get("rtmp_url", config.livetalking_push_url)
@@ -244,8 +269,36 @@ class DigitalHumanPipeline:
         self._log(message)
         self._set_state(PipelineState.ERROR)
 
+    async def _prepare_anchor_segments(self, config: PipelineConfig) -> AnchorAudioResult:
+        audio_result = await self._resolve_livetalking_audio(config)
+        if not audio_result.ok:
+            return AnchorAudioResult(False, audio_result.message)
+        if not audio_result.output_path:
+            return AnchorAudioResult(False, "音频文件不存在: ''")
+
+        source = Path(audio_result.output_path)
+        if not source.is_file():
+            return AnchorAudioResult(False, f"音频文件不存在: {audio_result.output_path!r}")
+
+        segment_dir = Path(config.resolve_output_dir()) / "anchor_segments"
+        try:
+            segments = AudioSegmenter().segment(source, segment_dir)
+        except Exception as exc:
+            self._log(f"anchor audio segment failed; fallback to full wav: {exc}")
+            segments = [source]
+
+        normalized_segments = [Path(segment) for segment in segments]
+        if not normalized_segments:
+            normalized_segments = [source]
+
+        return AnchorAudioResult(
+            True,
+            audio_result.message,
+            source_path=source,
+            segments=normalized_segments,
+        )
+
     async def _resolve_livetalking_audio(self, config: PipelineConfig):
-        from voice_manager import VoiceActionResult
         from livetalking_runtime import find_single_wav
 
         folder_wav = find_single_wav(config.audio_folder_path)
@@ -257,7 +310,7 @@ class DigitalHumanPipeline:
         return await self._synthesize_audio(config)
 
     async def _synthesize_audio(self, config: PipelineConfig):
-        from voice_manager import DEFAULT_SPEED_RATIO, DEFAULT_VOLUME_RATIO, VOICE_DATA_DIR, VoiceActionResult
+        from voice_manager import DEFAULT_SPEED_RATIO, DEFAULT_VOLUME_RATIO, VOICE_DATA_DIR
 
         settings = self._voice_manager.settings
         anchor = settings.anchor
@@ -332,6 +385,11 @@ class DigitalHumanPipeline:
     def _cancel_result(self) -> dict:
         self._set_state(PipelineState.CANCELLED)
         return {"ok": False, "message": "推流已取消"}
+
+    def enqueue_insertion_audio(self, wav_path, *, text: str = "") -> bool:
+        if self._speech_scheduler is None:
+            return False
+        return self._speech_scheduler.enqueue_insertion(wav_path, text=text)
 
 
 def _make_hls_handler(directory: str):
