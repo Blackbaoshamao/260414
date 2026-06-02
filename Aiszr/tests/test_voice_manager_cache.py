@@ -1,16 +1,20 @@
 import pytest
 import wave
 
+import voice_manager as voice_manager_module
 from voice_manager import (
     DEFAULT_SPEED_RATIO,
     DEFAULT_VOLUME_RATIO,
     QWEN_TTS_VC_MODEL,
     AliyunBailianProvider,
+    VoiceActionResult,
+    VoiceManager,
     VoiceProviderApiConfig,
     _cached_synthesis_path,
     _is_valid_audio_cache,
     _write_generated_audio,
 )
+from voice_models import VoiceEntry, VoiceRoleConfig, VoiceSettings
 
 
 def test_cached_synthesis_path_changes_with_text_and_voice(tmp_path):
@@ -130,3 +134,49 @@ def test_invalid_qwen_wav_header_is_rejected_and_normalized(tmp_path):
     fixed = _write_generated_audio(tmp_path / "fixed.wav", bytes(raw))
     assert fixed.suffix == ".wav"
     assert _is_valid_audio_cache(fixed) is True
+
+
+@pytest.mark.asyncio
+async def test_synthesize_role_to_file_uses_anchor_clone_without_playback(tmp_path, monkeypatch):
+    settings = VoiceSettings()
+    settings.voices.append(
+        VoiceEntry(
+            id="anchor-voice",
+            name="anchor",
+            clone_voice_id="clone-anchor",
+            clone_status="ready",
+        )
+    )
+    settings.anchor = VoiceRoleConfig(voice_id="anchor-voice")
+    manager = VoiceManager(settings)
+    keyword_wav = tmp_path / "keyword.wav"
+    calls = []
+    playback_calls = []
+
+    class FakeProvider:
+        async def synthesize(
+            self,
+            text,
+            voice_id,
+            output_dir,
+            *,
+            model_id="",
+            speed=DEFAULT_SPEED_RATIO,
+            volume=DEFAULT_VOLUME_RATIO,
+        ):
+            calls.append((text, voice_id, output_dir, model_id, speed, volume))
+            return VoiceActionResult(True, "ok", output_path=str(keyword_wav))
+
+    async def fail_playback(path):
+        playback_calls.append(path)
+        raise AssertionError("synthesize_role_to_file must not play audio")
+
+    monkeypatch.setattr(manager, "provider", lambda: FakeProvider())
+    monkeypatch.setattr(voice_manager_module, "play_wav_file", fail_playback)
+
+    result = await manager.synthesize_role_to_file("keyword", "anchor")
+
+    assert result.ok is True
+    assert result.output_path == str(keyword_wav)
+    assert calls[0][1] == "clone-anchor"
+    assert playback_calls == []

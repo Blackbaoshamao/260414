@@ -744,7 +744,7 @@ class VoiceManager:
             voice.last_error = result.message
         return result
 
-    async def synthesize_and_play(self, text: str, role_name: str) -> VoiceActionResult:
+    async def synthesize_role_to_file(self, text: str, role_name: str) -> VoiceActionResult:
         if not text.strip():
             return VoiceActionResult(False, "试听文本为空")
         try:
@@ -764,12 +764,12 @@ class VoiceManager:
                 voice.clone_voice_id = resolved.clone_voice_id
                 voice.clone_status = "ready"
                 voice.last_error = ""
-            elif resolved.clone_status == "training":
-                voice.clone_status = "training"
-                return VoiceActionResult(False, resolved.message)
-            elif not resolved.ok:
-                voice.clone_status = resolved.clone_status or "error"
-                voice.last_error = resolved.message
+            else:
+                if resolved.clone_status:
+                    voice.clone_status = resolved.clone_status
+                if not resolved.ok:
+                    voice.clone_status = resolved.clone_status or "error"
+                    voice.last_error = resolved.message
                 return resolved
 
         result = await provider.synthesize(
@@ -784,15 +784,20 @@ class VoiceManager:
             return result
         result.clone_voice_id = voice.clone_voice_id
         result.clone_status = voice.clone_status
-        if result.output_path:
-            if is_audio_stopped():
-                return result
-            try:
-                await play_wav_file(result.output_path)
-            except Exception as exc:
-                return VoiceActionResult(False, f"播放失败：{exc}", output_path=result.output_path)
-            if result.message != "使用缓存试听音频":
-                result.message = "试听已播放"
+        return result
+
+    async def synthesize_and_play(self, text: str, role_name: str) -> VoiceActionResult:
+        result = await self.synthesize_role_to_file(text, role_name)
+        if not result.ok or not result.output_path:
+            return result
+        if is_audio_stopped():
+            return result
+        try:
+            await play_wav_file(result.output_path)
+        except Exception as exc:
+            return VoiceActionResult(False, f"播放失败：{exc}", output_path=result.output_path)
+        if result.message != "使用缓存试听音频":
+            result.message = "试听已播放"
         return result
 
     async def clone_and_synthesize(
