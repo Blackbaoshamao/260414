@@ -36,6 +36,8 @@ Startup flow:
 3. Split the full WAV into short WAV segments using local silence detection.
 4. Loop those short segments through LiveTalking.
 
+The running digital-human stream uses a voice-settings snapshot captured when streaming starts. Provider, model, anchor voice, and clone settings changes apply after the stream is restarted. Keyword insertions use the same running snapshot so the inserted speech cannot accidentally switch to a different provider or voice while the anchor loop is still using older audio.
+
 Keyword flow:
 
 1. A keyword rule matches and `generate_voice` is enabled.
@@ -88,6 +90,8 @@ Default parameters should be close to the user's prior splitter workflow:
 - Scan step: `10 ms`
 - Maximum retained silence: `1000 ms`
 
+These defaults come from the user's prior measured splitter workflow and should be preserved initially. The implementation should still merge fragments shorter than the minimum segment length and guard against extreme segment counts.
+
 If segmentation produces no usable segments, the scheduler falls back to using the full anchor WAV as a single segment.
 
 ## Scheduler Responsibilities
@@ -135,7 +139,8 @@ It should not:
 `ui.py` keyword path:
 
 - When a keyword rule matches and `generate_voice` is true, synthesize the rule reply with the anchor voice and enqueue it for digital-human insertion.
-- Text injection/comment behavior remains unchanged.
+- Speech insertion should be platform-agnostic at the scheduler/API level: any captured message can trigger insertion if it reaches the keyword matching path.
+- The current text injection/comment behavior remains unchanged and is still limited to the existing WeChat/视频号 keyword auto-reply path.
 
 `ui_pages/keyword_reply.py`:
 
@@ -173,4 +178,3 @@ Focused tests should cover:
 - The digital human lip-syncs to the inserted keyword audio.
 - After insertion, the stream returns to the normal anchor script loop.
 - The app remains usable if segmentation fails, keyword synthesis fails, or the local provider is not configured.
-
