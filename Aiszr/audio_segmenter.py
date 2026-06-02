@@ -72,6 +72,7 @@ class AudioSegmenter:
         silence_start: int | None = None
         cursor = 0
         end_frame = params.nframes
+        tail_content_end_frame = params.nframes
 
         while cursor < params.nframes:
             window_end = min(params.nframes, cursor + step_frames)
@@ -99,11 +100,19 @@ class AudioSegmenter:
         if silence_start is not None:
             silence_frames = params.nframes - silence_start
             segment_frames = silence_start - segment_start
-            if silence_frames >= min_silence_frames and segment_frames >= min_segment_frames:
+            if silence_frames >= min_silence_frames and (
+                segment_frames >= min_segment_frames or cuts
+            ):
                 end_frame = silence_start + min(silence_frames, retained_silence_frames)
+                tail_content_end_frame = silence_start
 
         ranges = self._ranges_from_cuts(cuts, end_frame)
-        return self._merge_short_tail_ranges(ranges, params.nframes, min_segment_frames)
+        return self._merge_short_tail_ranges(
+            ranges,
+            params.nframes,
+            min_segment_frames,
+            tail_content_end_frame,
+        )
 
     def _ranges_from_cuts(self, cuts: list[int], end_frame: int) -> list[tuple[int, int]]:
         ranges: list[tuple[int, int]] = []
@@ -121,13 +130,17 @@ class AudioSegmenter:
         ranges: list[tuple[int, int]],
         source_end_frame: int,
         min_segment_frames: int,
+        tail_content_end_frame: int,
     ) -> list[tuple[int, int]]:
         if not ranges:
             return [(0, source_end_frame)]
 
         merged: list[tuple[int, int]] = []
-        for start_frame, end_frame in ranges:
-            if end_frame - start_frame < min_segment_frames and merged:
+        for index, (start_frame, end_frame) in enumerate(ranges):
+            effective_end_frame = end_frame
+            if index == len(ranges) - 1:
+                effective_end_frame = min(end_frame, tail_content_end_frame)
+            if effective_end_frame - start_frame < min_segment_frames and merged:
                 previous_start, _ = merged[-1]
                 merged[-1] = (previous_start, end_frame)
             else:

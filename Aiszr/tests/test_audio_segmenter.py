@@ -118,6 +118,31 @@ def test_short_tail_segment_is_not_emitted(tmp_path):
     assert not (output_dir / "segment_0002.wav").exists()
 
 
+def test_short_tail_before_trailing_silence_is_merged(tmp_path):
+    src = _write_wav(
+        tmp_path / "source.wav",
+        _tone_frames(2200)
+        + _silence_frames(300)
+        + _tone_frames(100)
+        + _silence_frames(3000),
+    )
+    output_dir = tmp_path / "segments"
+
+    result = AudioSegmenter(
+        AudioSegmenterConfig(
+            silence_threshold_db=-25,
+            min_segment_ms=2000,
+            min_silence_ms=50,
+            scan_step_ms=10,
+            max_retained_silence_ms=100,
+        )
+    ).segment(src, output_dir)
+
+    assert [path.name for path in result] == ["segment_0001.wav"]
+    assert 2000 <= _duration_ms(result[0]) < 3000
+    assert not (output_dir / "segment_0002.wav").exists()
+
+
 def test_max_segments_one_returns_source_wav(tmp_path):
     src = _write_wav(
         tmp_path / "source.wav",
