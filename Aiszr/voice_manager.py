@@ -760,8 +760,9 @@ class VoiceManager:
         provider = self.provider()
         if voice.clone_status == "training":
             resolved = await provider.resolve_clone(voice.clone_voice_id)
-            if resolved.ok and resolved.clone_status == "ready" and resolved.clone_voice_id:
-                voice.clone_voice_id = resolved.clone_voice_id
+            if resolved.clone_status == "ready":
+                if resolved.clone_voice_id:
+                    voice.clone_voice_id = resolved.clone_voice_id
                 voice.clone_status = "ready"
                 voice.last_error = ""
             elif resolved.clone_status == "training":
@@ -772,13 +773,21 @@ class VoiceManager:
                     clone_voice_id=resolved.clone_voice_id or voice.clone_voice_id,
                     clone_status="training",
                 )
-            else:
-                if resolved.clone_status:
-                    voice.clone_status = resolved.clone_status
-                if not resolved.ok:
-                    voice.clone_status = resolved.clone_status or "error"
-                    voice.last_error = resolved.message
+            elif not resolved.ok:
+                voice.clone_status = resolved.clone_status or "error"
+                voice.last_error = resolved.message
                 return resolved
+            elif resolved.clone_status:
+                voice.clone_status = resolved.clone_status
+                return VoiceActionResult(
+                    False,
+                    resolved.message,
+                    clone_voice_id=resolved.clone_voice_id or voice.clone_voice_id,
+                    clone_status=resolved.clone_status,
+                )
+            else:
+                voice.clone_status = "ready"
+                voice.last_error = ""
 
         result = await provider.synthesize(
             text=text,

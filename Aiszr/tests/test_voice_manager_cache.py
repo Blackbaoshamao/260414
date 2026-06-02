@@ -147,7 +147,7 @@ async def test_synthesize_role_to_file_uses_anchor_clone_without_playback(tmp_pa
             clone_status="ready",
         )
     )
-    settings.anchor = VoiceRoleConfig(voice_id="anchor-voice")
+    settings.anchor = VoiceRoleConfig(voice_id="anchor-voice", volume_gain=150)
     manager = VoiceManager(settings)
     keyword_wav = tmp_path / "keyword.wav"
     calls = []
@@ -182,6 +182,8 @@ async def test_synthesize_role_to_file_uses_anchor_clone_without_playback(tmp_pa
     assert calls[0][2].name == "generated"
     assert calls[0][2].parent.name == "anchor"
     assert calls[0][3] == settings.model_id
+    assert calls[0][4] == DEFAULT_SPEED_RATIO
+    assert calls[0][5] == pytest.approx(DEFAULT_VOLUME_RATIO * 1.5)
     assert result.clone_voice_id == "clone-anchor"
     assert result.clone_status == "ready"
     assert playback_calls == []
@@ -222,3 +224,41 @@ async def test_synthesize_role_to_file_treats_training_clone_as_not_ready(monkey
     assert result.clone_status == "training"
     assert voice.clone_status == "training"
     assert synth_calls == []
+
+
+@pytest.mark.asyncio
+async def test_synthesize_role_to_file_synthesizes_when_training_clone_becomes_ready(monkeypatch, tmp_path):
+    settings = VoiceSettings()
+    voice = VoiceEntry(
+        id="anchor-voice",
+        name="anchor",
+        clone_voice_id="clone-anchor",
+        clone_status="training",
+    )
+    settings.voices.append(voice)
+    settings.anchor = VoiceRoleConfig(voice_id="anchor-voice")
+    manager = VoiceManager(settings)
+    out = tmp_path / "ready.wav"
+    synth_calls = []
+
+    class FakeProvider:
+        async def resolve_clone(self, clone_voice_id):
+            return VoiceActionResult(
+                True,
+                "clone is ready",
+                clone_status="ready",
+            )
+
+        async def synthesize(self, text, voice_id, output_dir, *, model_id="", speed=1.0, volume=1.0):
+            synth_calls.append((text, voice_id, output_dir, model_id, speed, volume))
+            return VoiceActionResult(True, "ok", output_path=str(out))
+
+    monkeypatch.setattr(manager, "provider", lambda: FakeProvider())
+
+    result = await manager.synthesize_role_to_file("keyword", "anchor")
+
+    assert result.ok is True
+    assert result.output_path == str(out)
+    assert voice.clone_voice_id == "clone-anchor"
+    assert voice.clone_status == "ready"
+    assert synth_calls[0][1] == "clone-anchor"
