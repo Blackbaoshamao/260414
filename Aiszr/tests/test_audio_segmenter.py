@@ -33,6 +33,31 @@ def _write_wav(path: Path, frames: bytes) -> Path:
     return path
 
 
+def _write_stereo_tone_and_silence(path: Path, rate: int = 22050) -> Path:
+    frames = bytearray()
+    for kind, duration_ms in [
+        ("tone", 2200),
+        ("silence", 300),
+        ("tone", 2300),
+    ]:
+        frame_count = rate * duration_ms // 1000
+        for index in range(frame_count):
+            if kind == "tone":
+                left = int(16000 * math.sin(2 * math.pi * 440 * index / rate))
+                right = 0
+            else:
+                left = 0
+                right = 0
+            frames.extend(left.to_bytes(2, "little", signed=True))
+            frames.extend(right.to_bytes(2, "little", signed=True))
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(2)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(rate)
+        wav_file.writeframes(bytes(frames))
+    return path
+
+
 def _write_8bit_wav(path: Path, frame_count: int = 100) -> Path:
     with wave.open(str(path), "wb") as wav_file:
         wav_file.setnchannels(1)
@@ -77,6 +102,28 @@ def test_returns_source_wav_when_no_splittable_silence(tmp_path):
     result = AudioSegmenter().segment(src, output_dir)
 
     assert result == [src]
+
+
+def test_stereo_wav_segments_and_preserves_params(tmp_path):
+    src = _write_stereo_tone_and_silence(tmp_path / "source.wav")
+    output_dir = tmp_path / "segments"
+
+    result = AudioSegmenter(
+        AudioSegmenterConfig(
+            silence_threshold_db=-25,
+            min_segment_ms=2000,
+            min_silence_ms=50,
+            scan_step_ms=10,
+            max_retained_silence_ms=100,
+        )
+    ).segment(src, output_dir)
+
+    assert [path.name for path in result] == ["segment_0001.wav", "segment_0002.wav"]
+    with wave.open(str(result[0]), "rb") as wav_file:
+        assert wav_file.getnchannels() == 2
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.getframerate() == 22050
+        assert wav_file.getcomptype() == "NONE"
 
 
 def test_trailing_silence_is_trimmed_to_retained_silence(tmp_path):
@@ -169,7 +216,7 @@ def test_max_segments_cap_preserves_remaining_audio(tmp_path):
     ).segment(src, output_dir)
 
     assert [path.name for path in result] == ["segment_0001.wav", "segment_0002.wav"]
-    assert _duration_ms(result[1]) > 6500
+    assert 7150 <= _duration_ms(result[1]) <= 7250
 
 
 def test_middle_long_silence_drops_excess_from_next_segment(tmp_path):
@@ -242,6 +289,37 @@ def test_middle_long_silence_trim_allows_single_merged_segment(tmp_path):
     assert [path.name for path in result] == ["segment_0001.wav"]
     assert result != [src]
     assert 2400 <= _duration_ms(result[0]) <= 2600
+
+
+def test_material_trim_threshold_controls_single_segment_fallback(tmp_path):
+    output_dir = tmp_path / "segments"
+    below_threshold = _write_wav(
+        tmp_path / "below.wav",
+        _tone_frames(2200)
+        + _silence_frames(2090)
+        + _tone_frames(100),
+    )
+    at_threshold = _write_wav(
+        tmp_path / "at.wav",
+        _tone_frames(2200)
+        + _silence_frames(2100)
+        + _tone_frames(100),
+    )
+    segmenter = AudioSegmenter(
+        AudioSegmenterConfig(
+            silence_threshold_db=-25,
+            min_segment_ms=2000,
+            min_silence_ms=50,
+            scan_step_ms=10,
+            max_retained_silence_ms=100,
+        )
+    )
+
+    assert segmenter.segment(below_threshold, output_dir / "below") == [below_threshold]
+    result = segmenter.segment(at_threshold, output_dir / "at")
+
+    assert [path.name for path in result] == ["segment_0001.wav"]
+    assert result != [at_threshold]
 
 
 def test_max_segments_one_returns_source_wav(tmp_path):
