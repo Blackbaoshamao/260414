@@ -44,6 +44,20 @@ from loguru import logger
 from ui_constants import _CARD_H
 from ui import _AddCard, _VideoThumbCard
 from ui_components import MacButton
+from avatar_library import (
+    AvatarLibrary,
+    DEFAULT_QUALITY,
+    MAX_AVATAR_RECORDS,
+    STATUS_CHECKING,
+    STATUS_FAILED,
+    STATUS_IMPORTED,
+    STATUS_NORMALIZING,
+    STATUS_PROCESSING_CPU,
+    STATUS_PROCESSING_GPU,
+    STATUS_READY,
+)
+from avatar_preprocessor import AvatarPreprocessManager
+from livetalking_runtime import default_livetalking_root
 
 
 class VoiceConfigPage(SiPage):
@@ -60,8 +74,7 @@ class VoiceConfigPage(SiPage):
     # Emitted when the streaming-relevant configuration changes so HomePage can
     # update its pre-stream checklist (e.g. anchor_voice / green_screen).
     streaming_config_changed = pyqtSignal(object)
-    # HeyGem realtime lip-sync preview request — ui.py routes to popup.
-    heygem_preview_requested = pyqtSignal(object)
+    avatar_preprocess_changed = pyqtSignal(object)
     _ROLE_LABELS = {"anchor": "主播", "copilot": "助播"}
 
     def __init__(self, *args, **kwargs):
@@ -81,10 +94,19 @@ class VoiceConfigPage(SiPage):
         # emitted from the buttons we build below.
         self._video_paths: list[str] = []
         self._selected_index: int = -1
+        self._avatar_library = AvatarLibrary()
+        self.avatar_preprocess_changed.connect(self._on_avatar_preprocess_changed)
+        self._avatar_preprocessor = AvatarPreprocessManager(
+            self._avatar_library,
+            status_callback=self.avatar_preprocess_changed.emit,
+            log_callback=lambda msg: logger.info("AvatarPreprocess: {}", msg),
+        )
         self._obs_host = "127.0.0.1"
         self._obs_port = 4455
         self._obs_password = ""
-        self._heygem_anchor_path: str = ""
+        self._livetalking_audio_folder_path: str = str(
+            app_dir() / "data" / "voice" / "anchor" / "generated"
+        )
 
         container = SiTitledWidgetGroup(self)
         container.setSpacing(16)
@@ -355,27 +377,6 @@ class VoiceConfigPage(SiPage):
         self._stream_status_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none; font-size: 13px;")
         container.addWidget(self._stream_status_label)
 
-        # HeyGem 模式行 — 勾选后走数字人合成，不勾走原绿幕循环
-        heygem_row = QWidget(self)
-        heygem_layout = QHBoxLayout(heygem_row)
-        heygem_layout.setContentsMargins(0, 0, 0, 0)
-        heygem_layout.setSpacing(8)
-        self._heygem_checkbox = QCheckBox("使用 HeyGem 数字人合成", self)
-        self._heygem_checkbox.setToolTip(
-            "勾选：TTS WAV → HeyGem 出对口型 mp4 → HLS 循环推流\n不勾：原绿幕 + WAV 循环路径"
-        )
-        self._heygem_checkbox.toggled.connect(lambda _: self._save_streaming_config())
-        heygem_layout.addWidget(self._heygem_checkbox)
-        self._heygem_anchor_btn = MacButton("选择 anchor mp4", variant="secondary", parent=self)
-        self._heygem_anchor_btn.setMinimumSize(140, 32)
-        self._heygem_anchor_btn.clicked.connect(self._on_pick_heygem_anchor)
-        heygem_layout.addWidget(self._heygem_anchor_btn)
-        self._heygem_anchor_label = QLabel("(未选)", self)
-        self._heygem_anchor_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; font-size: 12px;")
-        self._heygem_anchor_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        heygem_layout.addWidget(self._heygem_anchor_label)
-        container.addWidget(heygem_row)
-
         stream_btn_row = QWidget(self)
         stream_btn_row.setFixedHeight(46)
         stream_btn_layout = QHBoxLayout(stream_btn_row)
@@ -389,10 +390,6 @@ class VoiceConfigPage(SiPage):
         self._stream_stop_btn.setMinimumSize(100, 38)
         self._stream_stop_btn.clicked.connect(self._on_stream_stop)
         stream_btn_layout.addWidget(self._stream_stop_btn)
-        self._heygem_preview_btn = MacButton("启动口型预览", variant="secondary", parent=self)
-        self._heygem_preview_btn.setMinimumSize(120, 38)
-        self._heygem_preview_btn.clicked.connect(self._on_open_heygem_preview)
-        stream_btn_layout.addWidget(self._heygem_preview_btn)
         stream_btn_layout.addStretch(1)
         container.addWidget(stream_btn_row)
 
@@ -463,7 +460,6 @@ class VoiceConfigPage(SiPage):
             self._anchor_preview_btn, self._copilot_preview_btn,
             self._anchor_delete_btn, self._copilot_delete_btn,
             self._stream_start_btn, self._stream_stop_btn,
-            self._heygem_preview_btn, self._heygem_anchor_btn,
         ):
             btn.apply_theme_styles()
 
@@ -793,16 +789,28 @@ class VoiceConfigPage(SiPage):
             elif item.spacerItem():
                 # already removed from layout by takeAt
                 pass
-        for i, path in enumerate(self._video_paths):
+        self._sync_video_paths_from_library()
+        records = self._avatar_library.list()
+        for i, record in enumerate(records):
+            path = record.video_path_for_pipeline()
             pixmap = self._load_thumbnail(path)
-            card = _VideoThumbCard(i, path, pixmap, self._gallery_inner)
+            card = _VideoThumbCard(
+                i,
+                path,
+                pixmap,
+                self._gallery_inner,
+                status_text=self._avatar_badge_text(record),
+            )
+            if record.error:
+                card.setToolTip(record.error)
             card.clicked.connect(self._on_thumb_clicked)
             card.remove_requested.connect(self._on_thumb_remove)
             card.set_selected(i == self._selected_index)
             self._gallery_layout.addWidget(card)
-        add_card = _AddCard(self._gallery_inner)
-        add_card.clicked.connect(self._on_add_video)
-        self._gallery_layout.addWidget(add_card)
+        if len(records) < MAX_AVATAR_RECORDS:
+            add_card = _AddCard(self._gallery_inner)
+            add_card.clicked.connect(self._on_add_video)
+            self._gallery_layout.addWidget(add_card)
         self._gallery_layout.addStretch(1)  # push cards to the left
 
     def _load_thumbnail(self, video_path: str) -> QPixmap | None:
@@ -829,6 +837,12 @@ class VoiceConfigPage(SiPage):
         return None
 
     def _on_thumb_clicked(self, index: int):
+        records = self._avatar_library.list()
+        if 0 <= index < len(records):
+            record = records[index]
+            self._avatar_library.set_selected(record.id)
+            if record.status != STATUS_READY:
+                self._avatar_preprocessor.enqueue(record.id, priority=True)
         self._selected_index = index
         for i in range(self._gallery_layout.count() - 1):
             item = self._gallery_layout.itemAt(i)
@@ -837,11 +851,22 @@ class VoiceConfigPage(SiPage):
         self._save_streaming_config()
 
     def _on_thumb_remove(self, index: int):
-        if index < 0 or index >= len(self._video_paths):
+        records = self._avatar_library.list()
+        if index < 0 or index >= len(records):
             return
-        self._video_paths.pop(index)
-        if self._selected_index >= len(self._video_paths):
-            self._selected_index = len(self._video_paths) - 1
+        record = records[index]
+        reply = QMessageBox.question(
+            self,
+            "移除主播形象",
+            "确认移除该主播形象？\n将同时删除该形象的视频副本和口型缓存。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._avatar_preprocessor.cancel(record.id)
+        self._avatar_library.remove(record.id, livetalking_root=str(default_livetalking_root()))
+        self._sync_video_paths_from_library()
         self._rebuild_gallery()
         self._save_streaming_config()
 
@@ -852,9 +877,38 @@ class VoiceConfigPage(SiPage):
         )
         if not paths:
             return
-        self._video_paths.extend(paths)
-        if self._selected_index < 0:
-            self._selected_index = 0
+        remaining = MAX_AVATAR_RECORDS - len(self._avatar_library.list())
+        if remaining <= 0:
+            QMessageBox.information(
+                self,
+                "主播形象已满",
+                f"主播形象最多支持 {MAX_AVATAR_RECORDS} 个，请先移除一个再添加。",
+            )
+            return
+        if len(paths) > remaining:
+            QMessageBox.information(
+                self,
+                "只导入部分视频",
+                f"主播形象最多支持 {MAX_AVATAR_RECORDS} 个，本次只导入前 {remaining} 个。",
+            )
+            paths = paths[:remaining]
+        quality = self._ask_avatar_quality()
+        imported_ids = []
+        errors = []
+        for path in paths:
+            try:
+                record = self._avatar_library.import_video(path, quality)
+                imported_ids.append(record.id)
+            except Exception as exc:
+                errors.append(f"{Path(path).name}: {exc}")
+        self._sync_video_paths_from_library()
+        for record_id in imported_ids:
+            self._avatar_preprocessor.enqueue(
+                record_id,
+                priority=(record_id == self._avatar_library.selected_id),
+            )
+        if errors:
+            QMessageBox.warning(self, "导入失败", "\n".join(errors[:5]))
         self._rebuild_gallery()
         self._save_streaming_config()
 
@@ -862,63 +916,60 @@ class VoiceConfigPage(SiPage):
 
     def _on_stream_start(self):
         config = self.get_streaming_config_dict()
-        if config.get("use_heygem") and not config.get("heygem_avatar_video_path"):
+        if not config.get("video_path"):
             QMessageBox.warning(
-                self, "需要选择 anchor 视频",
-                "已勾选「使用 HeyGem 数字人合成」但未选择 anchor 视频。\n请先点「选择 anchor mp4」按钮选一个视频。",
+                self, "需要选择主播视频",
+                "请先在主播形象里选一个视频。",
             )
+            return
+        record = self._avatar_library.selected()
+        if record and not record.is_ready():
+            QMessageBox.information(
+                self,
+                "主播形象处理中",
+                self._stream_block_message(record),
+            )
+            if record.status != STATUS_FAILED:
+                self._avatar_preprocessor.enqueue(record.id, priority=True)
             return
         self.digital_human_start_requested.emit(config)
 
     def _on_stream_stop(self):
         self.digital_human_stop_requested.emit()
 
-    def _on_open_heygem_preview(self):
-        """Hand off to ui.py — it validates WAV + speaker and opens the popup."""
-        self.heygem_preview_requested.emit({
-            "avatar_path": self._selected_video_path(),
-            "voice_settings": self._voice_settings_state,
-        })
-
     def _save_streaming_config(self):
         data = _load_settings()
         data["digital_human"] = {
             "video_paths": list(self._video_paths),
             "selected_index": self._selected_index,
+            "selected_avatar_record_id": self._avatar_library.selected_id,
             **self.get_streaming_config_dict(),
         }
         _save_settings(data)
-        self.streaming_config_changed.emit({
-            "selected_video": self._selected_video_path(),
-            "video_count": len(self._video_paths),
-        })
+        self.streaming_config_changed.emit(self._streaming_state_payload())
 
     def _selected_video_path(self) -> str:
-        if 0 <= self._selected_index < len(self._video_paths):
-            return self._video_paths[self._selected_index]
+        record = self._avatar_library.selected()
+        if record:
+            return record.video_path_for_pipeline()
         return ""
 
     def get_streaming_config_dict(self) -> dict:
+        record = self._avatar_library.selected()
+        ready = bool(record and record.is_ready())
         return {
             "video_path": self._selected_video_path(),
             "obs_scene": "",
             "obs_host": self._obs_host,
             "obs_port": self._obs_port,
             "obs_password": self._obs_password,
-            "use_heygem": self._heygem_checkbox.isChecked(),
-            "heygem_avatar_video_path": self._heygem_anchor_path,
+            "use_livetalking": True,
+            "audio_folder_path": self._livetalking_audio_folder_path,
+            "livetalking_avatar_id": record.livetalking_avatar_id if ready else "",
+            "avatar_record_id": record.id if record else "",
+            "avatar_ready": ready,
+            "avatar_status": record.status if record else "",
         }
-
-    def _on_pick_heygem_anchor(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择 HeyGem anchor 视频", "",
-            "视频文件 (*.mp4 *.avi *.mov);;所有文件 (*)",
-        )
-        if not path:
-            return
-        self._heygem_anchor_path = path
-        self._heygem_anchor_label.setText(Path(path).name)
-        self._save_streaming_config()
 
     def set_obs_connection_settings(self, host: str, port: int, password: str):
         self._obs_host = host
@@ -938,26 +989,102 @@ class VoiceConfigPage(SiPage):
         self._selected_index = -1
         if isinstance(value, dict):
             paths = value.get("video_paths", [])
-            if isinstance(paths, list):
-                self._video_paths = [p for p in paths if isinstance(p, str)]
+            legacy_paths = [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
             single = value.get("video_path", "")
-            if single and single not in self._video_paths:
-                self._video_paths.append(single)
+            if isinstance(single, str) and single and single not in legacy_paths:
+                legacy_paths.append(single)
             sel = value.get("selected_index", 0)
-            if self._video_paths:
-                self._selected_index = max(0, min(sel, len(self._video_paths) - 1))
-            self._rebuild_gallery()
-            # HeyGem 模式恢复
-            use_heygem = bool(value.get("use_heygem", False))
-            self._heygem_checkbox.setChecked(use_heygem)
-            anchor_path = value.get("heygem_avatar_video_path", "")
-            if isinstance(anchor_path, str) and anchor_path:
-                self._heygem_anchor_path = anchor_path
-                self._heygem_anchor_label.setText(Path(anchor_path).name)
+            self._avatar_library.migrate_video_paths(
+                legacy_paths,
+                sel,
+                livetalking_root=str(default_livetalking_root()),
+            )
+            selected_record_id = value.get("selected_avatar_record_id", "")
+            if isinstance(selected_record_id, str) and selected_record_id:
+                self._avatar_library.set_selected(selected_record_id)
+            audio_folder_path = value.get("audio_folder_path", "")
+            if isinstance(audio_folder_path, str) and audio_folder_path:
+                self._livetalking_audio_folder_path = audio_folder_path
+        self._sync_video_paths_from_library()
+        self._avatar_preprocessor.enqueue_pending()
+        self._rebuild_gallery()
         # Emit so HomePage's checklist refreshes its "绿幕素材" item.
-        self.streaming_config_changed.emit({
+        self.streaming_config_changed.emit(self._streaming_state_payload())
+
+    def _sync_video_paths_from_library(self):
+        records = self._avatar_library.list()
+        self._video_paths = [record.video_path_for_pipeline() for record in records]
+        self._selected_index = self._avatar_library.selected_index()
+
+    def _avatar_badge_text(self, record) -> str:
+        if record.status == STATUS_READY:
+            return f"可推流 · {record.quality}"
+        if record.status == STATUS_FAILED:
+            return "失败"
+        if record.status == STATUS_PROCESSING_GPU:
+            return f"GPU {record.progress}%"
+        if record.status == STATUS_PROCESSING_CPU:
+            return f"CPU {record.progress}%"
+        if record.status in (STATUS_IMPORTED, STATUS_NORMALIZING, STATUS_CHECKING):
+            return record.stage or "处理中"
+        return record.stage or ""
+
+    def _ask_avatar_quality(self) -> str:
+        items = ["快速 720p", "高清 1080p"]
+        choice, ok = QInputDialog.getItem(
+            self,
+            "主播形象质量",
+            "选择该主播形象的处理质量：",
+            items,
+            0,
+            False,
+        )
+        if not ok:
+            return DEFAULT_QUALITY
+        return "1080p" if "1080" in choice else "720p"
+
+    def _stream_block_message(self, record) -> str:
+        if record.status == STATUS_FAILED:
+            detail = record.error or "该主播形象处理失败，请移除后重新导入。"
+            return f"当前主播形象处理失败：{detail}"
+        stage = record.stage or "处理中"
+        progress = f" {record.progress}%" if record.progress else ""
+        return f"当前主播形象正在{stage}{progress}，完成后可推流。"
+
+    def _on_avatar_preprocess_changed(self, payload: object):
+        if not isinstance(payload, dict):
+            return
+        self._avatar_library.load()
+        self._sync_video_paths_from_library()
+        self._rebuild_gallery()
+        record = self._avatar_library.get(str(payload.get("record_id", "")))
+        if record and record.id == self._avatar_library.selected_id:
+            text = record.stage
+            if record.progress and record.status != STATUS_READY:
+                text = f"{text} {record.progress}%"
+            if record.error and record.status == STATUS_FAILED:
+                text = f"{text}: {record.error}"
+            if hasattr(self, "_stream_status_label"):
+                self._stream_status_label.setText(text or "空闲")
+        self._save_streaming_config()
+
+    def _streaming_state_payload(self) -> dict:
+        record = self._avatar_library.selected()
+        return {
             "selected_video": self._selected_video_path(),
             "video_count": len(self._video_paths),
-        })
+            "max_video_count": MAX_AVATAR_RECORDS,
+            "avatar_record_id": record.id if record else "",
+            "avatar_ready": bool(record and record.is_ready()),
+            "avatar_status": record.status if record else "",
+            "avatar_stage": record.stage if record else "",
+            "avatar_progress": record.progress if record else 0,
+            "avatar_error": record.error if record else "",
+            "avatar_quality": record.quality if record else "",
+            "avatar_display_name": record.display_name if record else "",
+        }
+
+    def shutdown(self) -> None:
+        self._avatar_preprocessor.stop()
 
 

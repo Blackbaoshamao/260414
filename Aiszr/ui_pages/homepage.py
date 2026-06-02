@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 import threading
 from ctypes import wintypes
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 from PyQt5.QtCore import (
@@ -13,7 +18,7 @@ from PyQt5.QtGui import QColor, QIntValidator, QPainter, QPixmap
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QTextBrowser, QToolTip, QApplication, QDialog,
+    QLabel, QTextBrowser, QToolTip, QApplication, QDialog, QFrame,
 )
 import ui_theme as theme
 from ui_components import MacCard, MacButton, MacComboBox, MacLineEdit
@@ -267,6 +272,7 @@ class _VolumeIcon(QWidget):
 class HomePage(SiPage):
     navigate_to_page = pyqtSignal(int)
     quick_start_requested = pyqtSignal()
+    quick_stop_requested = pyqtSignal()
     obs_status_check_requested = pyqtSignal(object)
     obs_settings_changed = pyqtSignal(object)
     keyword_auto_reply_toggled = pyqtSignal(bool)
@@ -350,29 +356,82 @@ class HomePage(SiPage):
     # ── Hero ───────────────────────────────────────────────
 
     def _build_hero(self) -> QWidget:
-        """Sonoma-style display title row. Compact (36px) to preserve grid space."""
+        """Lightweight brand header."""
         row = QWidget(self)
-        row.setFixedHeight(36)
+        row.setFixedHeight(60)
         ly = QHBoxLayout(row)
-        ly.setContentsMargins(8, 0, 8, 0)
-        ly.setSpacing(theme.SPACING_SM)
+        ly.setContentsMargins(8, 5, 8, 5)
+        ly.setSpacing(12)
+
+        self._hero_accent = QFrame(row)
+        self._hero_accent.setObjectName("HomeHeroAccent")
+        self._hero_accent.setFixedSize(4, 40)
+        ly.addWidget(self._hero_accent)
+
+        title_block = QWidget(row)
+        title_block.setFixedHeight(48)
+        title_block.setStyleSheet("background: transparent;")
+        title_layout = QVBoxLayout(title_block)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(0)
         self._hero_title = QLabel("Aiszr · AI 直播助手")
-        self._hero_title.setFont(theme.FONT_TITLE_2)
-        ly.addWidget(self._hero_title)
+        self._hero_title.setFont(theme.FONT_TITLE_1)
+        self._hero_title.setMinimumHeight(30)
+        title_layout.addWidget(self._hero_title)
+        self._hero_subtitle = QLabel("实时监控、推流控制、关键词回复")
+        self._hero_subtitle.setFont(theme.FONT_BODY)
+        self._hero_subtitle.setFixedHeight(18)
+        title_layout.addWidget(self._hero_subtitle)
+        ly.addWidget(title_block)
         ly.addStretch(1)
+        self._apply_hero_styles()
         return row
+
+    def _apply_hero_styles(self):
+        if hasattr(self, "_hero_accent"):
+            accent = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_TEXT_PRI, 0.10)
+            self._hero_accent.setStyleSheet(
+                f"QFrame#HomeHeroAccent {{"
+                f"background-color: {accent};"
+                f"border: none;"
+                f"border-radius: 2px;"
+                f"}}"
+            )
+        if hasattr(self, "_hero_title"):
+            self._hero_title.setStyleSheet(
+                f"color: {theme.CLR_TEXT_PRI}; background: transparent; border: none;"
+            )
+        if hasattr(self, "_hero_subtitle"):
+            self._hero_subtitle.setStyleSheet(
+                f"color: {theme.CLR_TEXT_SEC}; background: transparent; border: none;"
+            )
 
     # ── Stream control card ───────────────────────────────
 
     def _build_stream_card(self) -> MacCard:
         card = MacCard(self, title="推流控制")
         body = card.body()
-        body.addWidget(QLabel("HLS: --"))
-        body.addWidget(QLabel("在线: --"))
+        self._stream_asset_label = QLabel("主播形象：未选择")
+        self._stream_asset_label.setWordWrap(True)
+        self._stream_asset_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_SEC}; border: none; background: transparent;"
+        )
+        body.addWidget(self._stream_asset_label)
+        self._stream_state_label = QLabel("推流：空闲")
+        self._stream_state_label.setWordWrap(True)
+        self._stream_state_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_SEC}; border: none; background: transparent;"
+        )
+        body.addWidget(self._stream_state_label)
         row = QHBoxLayout()
         row.setSpacing(theme.SPACING_SM)
-        row.addWidget(MacButton("一键推流", variant="primary"))
-        row.addWidget(MacButton("停止推流", variant="secondary"))
+        self._home_stream_start_btn = MacButton("一键推流", variant="primary")
+        self._home_stream_start_btn.setEnabled(False)
+        self._home_stream_start_btn.clicked.connect(self.quick_start_requested.emit)
+        row.addWidget(self._home_stream_start_btn)
+        self._home_stream_stop_btn = MacButton("停止推流", variant="secondary")
+        self._home_stream_stop_btn.clicked.connect(self.quick_stop_requested.emit)
+        row.addWidget(self._home_stream_stop_btn)
         body.addLayout(row)
         return card
 
@@ -888,9 +947,7 @@ class HomePage(SiPage):
         """Re-apply theme-dependent styles. Called by AiszrApp._refresh_theme_styles."""
         # Hero title — needs CLR_TEXT_PRI, not the global QLabel default (text_sec)
         if hasattr(self, "_hero_title"):
-            self._hero_title.setStyleSheet(
-                f"color: {theme.CLR_TEXT_PRI}; background: transparent; border: none;"
-            )
+            self._apply_hero_styles()
         # Propagate to every Mac* component. Some widgets (e.g. DanmakuDisplay)
         # use the underscored `_apply_theme_styles` convention — accept either.
         for w in self.findChildren(QWidget):
@@ -905,8 +962,45 @@ class HomePage(SiPage):
     def update_capture_state(self, state, msg): pass
     def update_ai_state(self, payload): pass
     def update_voice_state(self, payload): pass
-    def update_dh_state(self, payload): pass
-    def update_streaming_assets_state(self, payload): pass
+    def update_dh_state(self, payload):
+        if not isinstance(payload, dict) or not hasattr(self, "_stream_state_label"):
+            return
+        message = str(payload.get("message", "") or "").strip()
+        state = str(payload.get("state", "") or "").strip()
+        text = message or state or "空闲"
+        self._stream_state_label.setText(f"推流：{text}")
+
+    def update_streaming_assets_state(self, payload):
+        if not isinstance(payload, dict) or not hasattr(self, "_stream_asset_label"):
+            return
+        count = int(payload.get("video_count") or 0)
+        max_count = int(payload.get("max_video_count") or 6)
+        ready = bool(payload.get("avatar_ready"))
+        status = str(payload.get("avatar_status") or "")
+        stage = str(payload.get("avatar_stage") or "")
+        progress = int(payload.get("avatar_progress") or 0)
+        name = str(payload.get("avatar_display_name") or "").strip()
+        quality = str(payload.get("avatar_quality") or "").strip()
+        error = str(payload.get("avatar_error") or "").strip()
+
+        if count <= 0:
+            text = f"主播形象：未选择（0/{max_count}）"
+        elif ready:
+            suffix = f" · {quality}" if quality else ""
+            display = f" · {name}" if name else ""
+            text = f"主播形象：可推流{suffix}{display}（{count}/{max_count}）"
+        elif status == "FAILED":
+            text = f"主播形象：处理失败（{count}/{max_count}）"
+            if error:
+                text += f" {error}"
+        else:
+            progress_text = f" {progress}%" if progress else ""
+            text = f"主播形象：{stage or '处理中'}{progress_text}（{count}/{max_count}）"
+        self._stream_asset_label.setText(text)
+        if hasattr(self, "_home_stream_start_btn"):
+            self._home_stream_start_btn.setEnabled(ready)
+            self._home_stream_start_btn.setToolTip("" if ready else "主播形象处理完成后可推流")
+
     def update_dashboard_metrics(self, snap): pass
     def update_uptime_start(self, state): pass
     def append_activity(self, msg): pass

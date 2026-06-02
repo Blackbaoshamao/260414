@@ -29,7 +29,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["ui_pages*", "ui_dialogs*", "heygem_realtime*"]
+include = ["ui_pages*", "ui_dialogs*"]
 exclude = ["browser_data*", "data*", "wechat_browser_data*", "tests*"]
 
 [tool.pytest.ini_options]

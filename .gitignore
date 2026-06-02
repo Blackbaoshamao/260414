@@ -41,12 +41,17 @@ pdf_pages/
 thesis_extracted/
 thesis_figs/
 template_media/
-Aiszr/deploy/heygem/smoke_hls/
-Aiszr/deploy/heygem/bench_results.csv
+
+# Local lip-sync/debug experiment outputs
+Aiszr/debug_*.png
+Aiszr/output_*.png
+Aiszr/output_*.mp4
+test_output/
+_test_audio*.wav
+_inspect_ckpt.py
 
 # Embedded repositories kept outside this root repo baseline
 PyQt-SiliconUI/
-Aiszr/deploy/heygem/HeyGem/
 
 # Archives and backups
 *.zip

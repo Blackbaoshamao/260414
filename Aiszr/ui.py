@@ -805,6 +805,8 @@ class CaptureWorker(QObject):
 
         state_labels = {
             "SYNTHESIZING": "TTS 合成中...",
+            "LIVETALKING_PREPARING": "准备 LiveTalking...",
+            "LIVETALKING_STARTING": "启动 LiveTalking...",
             "STARTING_SERVER": "启动 RTMP 服务...",
             "CONFIGURING_OBS": "配置 OBS...",
             "PUSHING": "正在推流...",
@@ -1454,7 +1456,14 @@ class _VideoThumbCard(QFrame):
     _CONTENT_MARGIN = 2
     _INNER_INSET = _BORDER_W + _CONTENT_MARGIN  # 4px on each side
 
-    def __init__(self, index: int, video_path: str, pixmap: QPixmap | None, parent=None):
+    def __init__(
+        self,
+        index: int,
+        video_path: str,
+        pixmap: QPixmap | None,
+        parent=None,
+        status_text: str = "",
+    ):
         super().__init__(parent)
         self._index = index
         self.setFixedSize(_CARD_W, _CARD_H)
@@ -1470,7 +1479,8 @@ class _VideoThumbCard(QFrame):
         layout.setSpacing(0)
 
         inner_w = _CARD_W - 2 * self._INNER_INSET
-        inner_h = _CARD_H - 2 * self._INNER_INSET
+        status_h = 24
+        inner_h = _CARD_H - 2 * self._INNER_INSET - status_h
         self._thumb_label = QLabel(self)
         self._thumb_label.setFixedSize(inner_w, inner_h)
         self._thumb_label.setAlignment(Qt.AlignCenter)
@@ -1486,6 +1496,20 @@ class _VideoThumbCard(QFrame):
         else:
             self._thumb_label.setText(os.path.basename(video_path)[:12])
         layout.addWidget(self._thumb_label)
+        self._badge_label = QLabel(self)
+        self._badge_label.setAlignment(Qt.AlignCenter)
+        self._badge_label.setStyleSheet(
+            "QLabel {"
+            "background-color: transparent;"
+            f"color: {CLR_TEXT_SEC};"
+            "border: none;"
+            "font-size: 11px;"
+            "padding: 2px 0;"
+            "}"
+        )
+        self._badge_label.setFixedSize(inner_w, status_h)
+        self.set_status(status_text)
+        layout.addWidget(self._badge_label)
 
     def _apply_border_style(self, color: str):
         self.setStyleSheet(f"""
@@ -1499,6 +1523,10 @@ class _VideoThumbCard(QFrame):
     @property
     def index(self):
         return self._index
+
+    def set_status(self, text: str):
+        text = (text or "").strip()
+        self._badge_label.setText(text)
 
     def set_selected(self, selected: bool):
         self._selected = selected
@@ -1835,7 +1863,6 @@ class AiszrApp(SiliconApplication):
         self._voice_page.digital_human_start_requested.connect(self._on_digital_human_start)
         self._voice_page.digital_human_stop_requested.connect(self._on_digital_human_stop)
         self._voice_page.streaming_config_changed.connect(self._on_streaming_config_changed)
-        self._voice_page.heygem_preview_requested.connect(self._on_open_heygem_preview)
 
         self._voice_api_dialog = VoiceApiDialog(self)
         self._voice_api_dialog.voice_settings_changed.connect(self._on_voice_settings_changed)
@@ -1937,6 +1964,7 @@ class AiszrApp(SiliconApplication):
 
         # HomePage dashboard wiring
         self._home_page.quick_start_requested.connect(self._on_quick_start)
+        self._home_page.quick_stop_requested.connect(self._on_digital_human_stop)
         worker.danmaku_received.connect(self._home_page.append_activity)
         worker.metrics_updated.connect(self._home_page.update_dashboard_metrics)
         worker.connection_changed.connect(self._home_page.update_uptime_start)
@@ -2294,6 +2322,16 @@ class AiszrApp(SiliconApplication):
                 fold_after=4000,
             )
             return
+        if config.get("avatar_ready") is False:
+            self._set_page(3)
+            self.LayerRightMessageSidebar().send(
+                title="一键开播",
+                text="当前主播形象还在处理，完成后再点击一键开播。",
+                msg_type=2,
+                icon=SiGlobal.siui.iconpack.get("ic_fluent_info_filled"),
+                fold_after=4000,
+            )
+            return
         try:
             self._worker.start_digital_human(config)
         except Exception as e:
@@ -2352,68 +2390,11 @@ class AiszrApp(SiliconApplication):
                 fold_after=12000,
             )
 
-    def _on_open_heygem_preview(self, payload: object):
-        """Validate prerequisites + open the HeyGem realtime lip-sync popup."""
-        if not isinstance(payload, dict):
-            return
-        avatar_path = str(payload.get("avatar_path", "")).strip()
-        settings = payload.get("voice_settings")
-        if not avatar_path:
-            self.LayerRightMessageSidebar().send(
-                title="启动口型预览", text="请先选择主播绿幕素材",
-                msg_type=3,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_warning_filled"),
-                fold_after=4000,
-            )
-            return
-        from voice_manager import default_anchor_wav_path
-        wav_path = default_anchor_wav_path(settings) if settings is not None else None
-        if wav_path is None or not wav_path.exists():
-            self.LayerRightMessageSidebar().send(
-                title="启动口型预览",
-                text="缓存语音不存在，请先在主播设置中保存话术并点试听",
-                msg_type=3,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_warning_filled"),
-                fold_after=4000,
-            )
-            return
-        # out_index 可能是真实 pyaudio index，也可能是 -1（Qt fallback 枚举路径，
-        # 表示走系统默认输出）。Worker 会把 -1 当成 "不指定 output_device_index"。
-        # 只有 combo 真的空才视为"没设备"。
-        out_index = self._home_page.selected_out_index()
-        combo = getattr(self._home_page, "_spk_combo", None)
-        if combo is None or combo.count() == 0:
-            self.LayerRightMessageSidebar().send(
-                title="启动口型预览", text="请先在主页选择音频输出设备",
-                msg_type=3,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_warning_filled"),
-                fold_after=4000,
-            )
-            return
-        if getattr(self, "_heygem_popup", None) is not None:
-            self._heygem_popup.raise_()
-            self._heygem_popup.activateWindow()
-            return
-        from ui_pages.heygem_preview_dialog import HeyGemPreviewDialog
-        self._heygem_popup = HeyGemPreviewDialog(
-            wav_path=str(wav_path),
-            avatar_video_path=avatar_path,
-            out_device_index=out_index,
-            parent=self,
-        )
-        self._heygem_popup.closed.connect(self._on_heygem_popup_closed)
-        self._heygem_popup.show()
-
-    def _on_heygem_popup_closed(self):
-        self._heygem_popup = None
-
     def closeEvent(self, event):
         from audio_output import stop_all_audio
-        if getattr(self, "_heygem_popup", None) is not None:
-            try:
-                self._heygem_popup.close()
-            except Exception:
-                pass
+        if hasattr(self, "_voice_page"):
+            with contextlib.suppress(Exception):
+                self._voice_page.shutdown()
         stop_all_audio()
         self._worker.stop()
         QApplication.instance().quit()

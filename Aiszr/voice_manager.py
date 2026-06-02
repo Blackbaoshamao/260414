@@ -113,7 +113,7 @@ def _cached_synthesis_path(
     return output_dir / f"{provider}_{digest}.{suffix.lstrip('.')}"
 
 
-# Public alias for cross-module use (e.g. HeyGem 实时口型弹窗 locating cached WAVs).
+# Public alias for cross-module use when locating cached WAVs.
 cached_synthesis_path = _cached_synthesis_path
 
 

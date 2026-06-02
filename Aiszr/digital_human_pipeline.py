@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import shutil
 from dataclasses import dataclass
 from enum import Enum, auto
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -14,17 +13,15 @@ from typing import Callable
 
 from loguru import logger
 
-from ffmpeg_ops import (
-    check_ffmpeg_available,
-    start_hls_push,
-)
+from ffmpeg_ops import check_ffmpeg_available
 from obs_actions import ObsDigitalHumanConfigurator, ObsWebSocketClient
 
 
 class PipelineState(Enum):
     IDLE = auto()
     SYNTHESIZING = auto()
-    HEYGEM_SYNTHESIZING = auto()
+    LIVETALKING_PREPARING = auto()
+    LIVETALKING_STARTING = auto()
     STARTING_SERVER = auto()
     CONFIGURING_OBS = auto()
     PUSHING = auto()
@@ -51,16 +48,21 @@ class PipelineConfig:
     obs_host: str = "127.0.0.1"
     obs_port: int = 4455
     obs_password: str = ""
-    # HeyGem 数字人合成 — 开关 + anchor 视频路径
-    # use_heygem=True 时跳过绿幕循环路径，先把 TTS WAV submit 给 HeyGem
-    # 合成出音视频对口型的 mp4，然后 HLS 循环推流
-    use_heygem: bool = False
-    heygem_avatar_video_path: str = ""
-    heygem_timeout_sec: float = 600.0
+    use_livetalking: bool = True
+    audio_folder_path: str = ""
+    livetalking_root: str = ""
+    mediamtx_exe_path: str = ""
+    livetalking_python_exe_path: str = ""
+    wav2lip384_weight_path: str = ""
+    livetalking_avatar_id: str = ""
+    livetalking_listen_port: int = 8010
+    livetalking_push_url: str = "rtmp://127.0.0.1:1935/live/aiszr"
+    livetalking_batch_size: int = 4
+    livetalking_modelres: int = 384
 
 
 class DigitalHumanPipeline:
-    """Orchestrates: TTS -> HLS stream -> HTTP serve -> OBS config."""
+    """Orchestrates LiveTalking wav2lip RTMP output and OBS config."""
 
     def __init__(
         self,
@@ -76,6 +78,7 @@ class DigitalHumanPipeline:
         self._hls_dir: str | None = None
         self._http_server: HTTPServer | None = None
         self._http_thread: Thread | None = None
+        self._livetalking_runtime = None
         self._cancel_event = asyncio.Event()
 
     @property
@@ -121,99 +124,7 @@ class DigitalHumanPipeline:
             if self._cancel_event.is_set():
                 return self._cancel_result()
 
-            # Step 2: TTS synthesis
-            audio_result = await self._synthesize_audio(config)
-            if not audio_result.ok:
-                self._set_state(PipelineState.ERROR)
-                self._log(f"TTS 合成失败: {audio_result.message}")
-                return {"ok": False, "message": f"TTS 合成失败: {audio_result.message}"}
-            if self._cancel_event.is_set():
-                return self._cancel_result()
-
-            # Step 3: Validate inputs
-            if not audio_result.output_path or not Path(audio_result.output_path).is_file():
-                self._set_state(PipelineState.ERROR)
-                self._log(f"音频文件不存在: {audio_result.output_path!r}")
-                return {"ok": False, "message": f"音频文件不存在: {audio_result.output_path!r}"}
-
-            # Step 3.5: HeyGem 数字人合成（可选）
-            # use_heygem=True 时把 TTS WAV + anchor mp4 提交给 HeyGem，
-            # 拿到对口型的音视频 mp4，覆盖 video_path，置空 audio_path，
-            # 后续 HLS push 走单输入循环路径
-            hls_audio_path: str | None = audio_result.output_path
-            hls_video_path = config.video_path
-            if config.use_heygem:
-                heygem_result = await self._heygem_synthesize(config, audio_result.output_path)
-                if not heygem_result.get("ok"):
-                    self._set_state(PipelineState.ERROR)
-                    self._log(f"HeyGem 失败: {heygem_result.get('message', '未知错误')}")
-                    return heygem_result
-                hls_video_path = heygem_result["mp4_path"]
-                hls_audio_path = None  # mp4 自带音频
-                if self._cancel_event.is_set():
-                    return self._cancel_result()
-
-            if not hls_video_path or not Path(hls_video_path).is_file():
-                self._set_state(PipelineState.ERROR)
-                self._log(f"视频文件不存在: {hls_video_path!r}")
-                return {"ok": False, "message": f"视频文件不存在: {hls_video_path!r}"}
-
-            # Step 4: Prepare HLS output directory + HTTP server
-            self._set_state(PipelineState.STARTING_SERVER)
-            hls_dir = Path(config.resolve_output_dir()).resolve() / "hls"
-            hls_dir.mkdir(parents=True, exist_ok=True)
-            for f in hls_dir.glob("*"):
-                f.unlink(missing_ok=True)
-            self._hls_dir = str(hls_dir)
-
-            http_port = self._start_http_server(str(hls_dir))
-            m3u8_path = str(hls_dir / "stream.m3u8")
-            m3u8_url = f"http://127.0.0.1:{http_port}/stream.m3u8"
-            self._log(f"HLS 服务: {m3u8_url}")
-
-            # ── ffmpeg HLS 推流 ──
-            # use_heygem=False: video=绿幕循环 + audio=TTS WAV
-            # use_heygem=True : video=HeyGem mp4（含音频），audio_path=None
-            self._set_state(PipelineState.PUSHING)
-            self._ffmpeg_proc = await start_hls_push(
-                video_path=hls_video_path,
-                audio_path=hls_audio_path,
-                hls_dir=str(hls_dir),
-            )
-            # Wait for m3u8 playlist to appear (timeout 15s)
-            for _ in range(150):
-                if self._cancel_event.is_set():
-                    return self._cancel_result()
-                if self._ffmpeg_proc.returncode is not None:
-                    stderr = await self._ffmpeg_proc.stderr.read()
-                    self._set_state(PipelineState.ERROR)
-                    self._log(f"ffmpeg 提前退出: {stderr.decode(errors='replace')[:500]}")
-                    return {"ok": False, "message": "推流失败: ffmpeg 提前退出"}
-                if Path(m3u8_path).exists():
-                    break
-                await asyncio.sleep(0.1)
-            else:
-                self._set_state(PipelineState.ERROR)
-                return {"ok": False, "message": "推流超时：HLS 文件未生成"}
-
-            # Step 6: OBS auto-config AFTER stream is live. OBS misconfig
-            # is non-fatal — surface via `obs_warning` so the UI can show
-            # a warning Toast.
-            self._set_state(PipelineState.CONFIGURING_OBS)
-            obs_result = await self._configure_obs(config, m3u8_url)
-
-            self._set_state(PipelineState.STREAMING)
-            result = {
-                "ok": True,
-                "message": "推流已开始",
-                "state": "streaming",
-            }
-            if not obs_result.get("ok"):
-                result["obs_warning"] = (
-                    f"OBS 自动配置失败：{obs_result.get('message', '未知错误')}。"
-                    f"请手动在 OBS 添加 Media Source，URL：{m3u8_url}"
-                )
-            return result
+            return await self._run_livetalking(config)
 
         except asyncio.CancelledError:
             return self._cancel_result()
@@ -232,6 +143,11 @@ class DigitalHumanPipeline:
                 self._ffmpeg_proc.terminate()
                 await asyncio.wait_for(self._ffmpeg_proc.wait(), timeout=5)
             self._ffmpeg_proc = None
+
+        if self._livetalking_runtime:
+            with contextlib.suppress(Exception):
+                await self._livetalking_runtime.stop()
+            self._livetalking_runtime = None
 
         self._stop_http_server()
 
@@ -252,6 +168,93 @@ class DigitalHumanPipeline:
             self._hls_dir = None
 
         self._set_state(PipelineState.IDLE)
+
+    async def _run_livetalking(self, config: PipelineConfig) -> dict:
+        if not config.video_path or not Path(config.video_path).is_file():
+            self._set_state(PipelineState.ERROR)
+            return {"ok": False, "message": f"主播视频不存在: {config.video_path!r}"}
+
+        self._set_state(PipelineState.LIVETALKING_PREPARING)
+        audio_result = await self._resolve_livetalking_audio(config)
+        if not audio_result.ok:
+            self._set_state(PipelineState.ERROR)
+            self._log(f"LiveTalking 音频准备失败: {audio_result.message}")
+            return {"ok": False, "message": f"LiveTalking 音频准备失败: {audio_result.message}"}
+        if not audio_result.output_path or not Path(audio_result.output_path).is_file():
+            self._set_state(PipelineState.ERROR)
+            return {"ok": False, "message": f"音频文件不存在: {audio_result.output_path!r}"}
+        if self._cancel_event.is_set():
+            return self._cancel_result()
+
+        from livetalking_runtime import LiveTalkingRuntime, LiveTalkingRuntimeConfig
+
+        runtime_config = LiveTalkingRuntimeConfig(
+            livetalking_root=config.livetalking_root,
+            mediamtx_exe_path=config.mediamtx_exe_path,
+            python_exe_path=config.livetalking_python_exe_path,
+            wav2lip384_weight_path=config.wav2lip384_weight_path,
+            avatar_id=config.livetalking_avatar_id,
+            listen_port=config.livetalking_listen_port,
+            push_url=config.livetalking_push_url,
+            batch_size=config.livetalking_batch_size,
+            modelres=config.livetalking_modelres,
+            avatar_video_path=config.video_path,
+            output_dir=config.resolve_output_dir(),
+        )
+
+        self._set_state(PipelineState.LIVETALKING_STARTING)
+        self._livetalking_runtime = LiveTalkingRuntime(
+            log_callback=self._log,
+            error_callback=self._on_livetalking_runtime_error,
+        )
+        try:
+            runtime_result = await self._livetalking_runtime.start(
+                runtime_config,
+                audio_result.output_path,
+            )
+        except Exception:
+            with contextlib.suppress(Exception):
+                await self._livetalking_runtime.stop()
+            self._livetalking_runtime = None
+            raise
+        if self._cancel_event.is_set():
+            return self._cancel_result()
+
+        self._set_state(PipelineState.CONFIGURING_OBS)
+        stream_url = runtime_result.get("rtmp_url", config.livetalking_push_url)
+        obs_result = await self._configure_obs(config, stream_url)
+
+        self._set_state(PipelineState.STREAMING)
+        result = {
+            "ok": True,
+            "message": "LiveTalking RTMP 推流已开始",
+            "state": "streaming",
+            "stream_url": stream_url,
+        }
+        if not obs_result.get("ok"):
+            result["obs_warning"] = (
+                f"OBS 自动配置失败：{obs_result.get('message', '未知错误')}。"
+                f"请手动在 OBS 添加 Media Source，URL：{stream_url}"
+            )
+        return result
+
+    def _on_livetalking_runtime_error(self, message: str) -> None:
+        if self._cancel_event.is_set():
+            return
+        self._log(message)
+        self._set_state(PipelineState.ERROR)
+
+    async def _resolve_livetalking_audio(self, config: PipelineConfig):
+        from voice_manager import VoiceActionResult
+        from livetalking_runtime import find_single_wav
+
+        folder_wav = find_single_wav(config.audio_folder_path)
+        if folder_wav is not None:
+            self._log(f"使用 WAV 文件夹音频: {folder_wav.name}")
+            return VoiceActionResult(True, "使用 WAV 文件夹音频", output_path=str(folder_wav))
+        if config.audio_folder_path:
+            self._log("WAV 文件夹没有音频，回退到 TTS")
+        return await self._synthesize_audio(config)
 
     async def _synthesize_audio(self, config: PipelineConfig):
         from voice_manager import DEFAULT_SPEED_RATIO, DEFAULT_VOLUME_RATIO, VOICE_DATA_DIR, VoiceActionResult
@@ -290,96 +293,6 @@ class DigitalHumanPipeline:
         if result.ok:
             self._log(f"音频就绪: {Path(result.output_path).name}")
         return result
-
-    async def _heygem_synthesize(
-        self, config: PipelineConfig, wav_path: str,
-    ) -> dict:
-        """提交 WAV + anchor 给 HeyGem，等出 mp4。
-
-        HeyGem 客户端是同步阻塞（requests.post + sleep poll），
-        放 asyncio.to_thread 里跑避免阻塞 Qt event loop。
-
-        返回 dict：成功 {ok: True, mp4_path: str}；失败 {ok: False, message: str}
-        """
-        from heygem_realtime.batch_client import (
-            DEFAULT_DATA_ROOT,
-            HeyGemBatchClient,
-            HeyGemBatchError,
-            HeyGemServiceNotReady,
-        )
-
-        self._log(f"HeyGem 入参 anchor={config.heygem_avatar_video_path!r} wav={wav_path!r}")
-        if not config.heygem_avatar_video_path:
-            return {
-                "ok": False,
-                "message": "已勾选「使用 HeyGem」但未选择 anchor 视频，请先在推流控制区点「选择 anchor mp4」",
-            }
-        avatar = Path(config.heygem_avatar_video_path)
-        if not avatar.is_file():
-            return {"ok": False, "message": f"HeyGem anchor 视频不存在: {avatar}"}
-
-        # HeyGem 硬编码 /code/data/temp/，wav 必须在 <data_root>/temp/ 下
-        # TTS 输出在 voice_manager 的 anchor/generated/，先 copy 过去
-        temp_dir = (DEFAULT_DATA_ROOT / "temp").resolve()
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        src_wav = Path(wav_path).resolve()
-        try:
-            src_wav.relative_to(temp_dir)
-            wav_in_temp = src_wav
-        except ValueError:
-            wav_in_temp = temp_dir / f"aiszr_anchor_{src_wav.stem}.wav"
-            shutil.copy2(src_wav, wav_in_temp)
-            self._log(f"WAV → {wav_in_temp.name}")
-
-        # avatar 也要在 temp/ 下，不在就 copy
-        try:
-            avatar.resolve().relative_to(temp_dir)
-            avatar_in_temp = avatar.resolve()
-        except ValueError:
-            avatar_in_temp = temp_dir / f"aiszr_avatar_{avatar.stem}.mp4"
-            if not avatar_in_temp.is_file():
-                shutil.copy2(avatar, avatar_in_temp)
-            self._log(f"anchor → {avatar_in_temp.name}")
-
-        self._set_state(PipelineState.HEYGEM_SYNTHESIZING)
-        self._log(f"submit wav={wav_in_temp.name} avatar={avatar_in_temp.name}")
-
-        client = HeyGemBatchClient(
-            data_root=DEFAULT_DATA_ROOT,
-            timeout_sec=config.heygem_timeout_sec,
-        )
-
-        def _run_sync():
-            if not client.is_alive():
-                raise HeyGemServiceNotReady(
-                    f"{client.base_url} 不可达 — docker 容器没起来？"
-                )
-            return client.synthesize(
-                wav_path=wav_in_temp,
-                avatar_video_path=avatar_in_temp,
-                chaofen=0,
-            )
-
-        try:
-            result = await asyncio.to_thread(_run_sync)
-        except HeyGemServiceNotReady as exc:
-            return {"ok": False, "message": f"HeyGem 服务不可达：{exc}"}
-        except HeyGemBatchError as exc:
-            return {"ok": False, "message": f"HeyGem 合成失败：{exc}"}
-        except Exception as exc:
-            import traceback
-            return {"ok": False, "message": f"HeyGem 未知错误：{exc}\n{traceback.format_exc()[:800]}"}
-
-        if not result.mp4_abs_path.is_file():
-            return {
-                "ok": False,
-                "message": f"HeyGem 报成功但 mp4 不存在: {result.mp4_abs_path}",
-            }
-
-        self._log(
-            f"HeyGem OK {result.elapsed_sec:.1f}s mp4={result.mp4_abs_path.name}"
-        )
-        return {"ok": True, "mp4_path": str(result.mp4_abs_path)}
 
     async def _configure_obs(self, config: PipelineConfig, stream_path: str) -> dict:
         """Best-effort OBS Media Source config. Returns {ok, message} so the

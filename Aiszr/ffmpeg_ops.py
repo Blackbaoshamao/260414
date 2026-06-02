@@ -234,7 +234,7 @@ async def start_hls_push(
 ) -> asyncio.subprocess.Process:
     """Start ffmpeg writing HLS segments to a local directory.
 
-    audio_path=None 时走 HeyGem 路径 — video 是音视频合一的 mp4，直接 -map 0:a。
+    audio_path=None 时走音视频合一路径，直接从 video 映射音频。
     audio_path=path 时走原绿幕路径 — video 是无声循环视频，audio 单独从 WAV 接入。
     """
     ffmpeg_path = _resolve_ffmpeg_path()
