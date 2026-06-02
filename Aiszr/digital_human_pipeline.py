@@ -139,6 +139,7 @@ class DigitalHumanPipeline:
             return await self._run_livetalking(config)
 
         except asyncio.CancelledError:
+            await self._stop_livetalking_speech_stack()
             return self._cancel_result()
         except Exception as exc:
             import traceback
@@ -219,12 +220,16 @@ class DigitalHumanPipeline:
                 None,
                 loop_audio=False,
             )
+        except asyncio.CancelledError:
+            await self._stop_livetalking_speech_stack()
+            raise
         except Exception:
             with contextlib.suppress(Exception):
                 await self._livetalking_runtime.stop()
             self._livetalking_runtime = None
             raise
         if self._cancel_event.is_set():
+            await self._stop_livetalking_speech_stack()
             return self._cancel_result()
 
         listen_port = int(runtime_result.get("listen_port") or config.livetalking_listen_port)

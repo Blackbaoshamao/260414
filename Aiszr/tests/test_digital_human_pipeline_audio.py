@@ -240,6 +240,69 @@ async def test_run_livetalking_cleans_up_runtime_when_first_audio_send_fails(
 
 
 @pytest.mark.asyncio
+async def test_run_livetalking_cleans_up_runtime_when_cancelled_after_start(
+    monkeypatch, tmp_path
+):
+    pipeline = _pipeline()
+    video = tmp_path / "anchor.mp4"
+    segment = tmp_path / "segment.wav"
+    video.write_bytes(b"video")
+    segment.write_bytes(b"RIFFxxxxWAVE")
+    events = []
+
+    class FakeRuntime:
+        async def start(self, _runtime_config, wav_path=None, *, loop_audio=True):
+            pipeline._cancel_event.set()
+            return {"ok": True, "rtmp_url": "rtmp://127.0.0.1:1935/live/test", "listen_port": 9012}
+
+        async def stop(self):
+            events.append("runtime.stop")
+
+    async def fake_prepare(_config):
+        return SimpleNamespace(ok=True, message="ok", source_path=segment, segments=[segment])
+
+    monkeypatch.setattr(pipeline, "_prepare_anchor_segments", fake_prepare)
+    monkeypatch.setattr(livetalking_runtime, "LiveTalkingRuntime", lambda **_kwargs: FakeRuntime())
+
+    result = await pipeline._run_livetalking(PipelineConfig(video_path=str(video), output_dir=str(tmp_path)))
+
+    assert result["ok"] is False
+    assert events == ["runtime.stop"]
+    assert pipeline._livetalking_runtime is None
+
+
+@pytest.mark.asyncio
+async def test_run_livetalking_cleans_up_runtime_when_start_is_cancelled(
+    monkeypatch, tmp_path
+):
+    pipeline = _pipeline()
+    video = tmp_path / "anchor.mp4"
+    segment = tmp_path / "segment.wav"
+    video.write_bytes(b"video")
+    segment.write_bytes(b"RIFFxxxxWAVE")
+    events = []
+
+    class FakeRuntime:
+        async def start(self, _runtime_config, wav_path=None, *, loop_audio=True):
+            raise asyncio.CancelledError()
+
+        async def stop(self):
+            events.append("runtime.stop")
+
+    async def fake_prepare(_config):
+        return SimpleNamespace(ok=True, message="ok", source_path=segment, segments=[segment])
+
+    monkeypatch.setattr(pipeline, "_prepare_anchor_segments", fake_prepare)
+    monkeypatch.setattr(livetalking_runtime, "LiveTalkingRuntime", lambda **_kwargs: FakeRuntime())
+
+    with pytest.raises(asyncio.CancelledError):
+        await pipeline._run_livetalking(PipelineConfig(video_path=str(video), output_dir=str(tmp_path)))
+
+    assert events == ["runtime.stop"]
+    assert pipeline._livetalking_runtime is None
+
+
+@pytest.mark.asyncio
 async def test_speech_scheduler_done_callback_sets_error_and_cleans_runtime():
     pipeline = _pipeline()
     events = []
