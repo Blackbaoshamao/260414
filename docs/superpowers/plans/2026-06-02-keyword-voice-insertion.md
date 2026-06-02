@@ -16,7 +16,7 @@
 
 ## Scope Notes
 
-This plan implements the scheduler and Aliyun-backed insertion path. It also adds a `local_voice` provider slot and config support, but does not select or integrate a specific local model. That remains behind the research gate from the design spec.
+This plan implements the scheduler and Aliyun-backed insertion path. It also adds a `local_voice` provider backed by a locally deployed GPT-SoVITS HTTP service. Aliyun remains the default provider; GPT-SoVITS is optional and requires the user to run its local API service.
 
 The current text comment injection path stays limited to the existing WeChat/视频号 keyword auto-reply path. Speech insertion is designed platform-agnostically once a message reaches keyword matching.
 
@@ -27,8 +27,8 @@ The current text comment injection path stays limited to the existing WeChat/视
 - Modify `Aiszr/livetalking_runtime.py`: expose single-WAV upload and allow startup without owning the fixed loop.
 - Modify `Aiszr/digital_human_pipeline.py`: synthesize full anchor WAV, segment it, start scheduler, expose insertion enqueue method.
 - Modify `Aiszr/voice_manager.py`: add non-playing anchor synthesis helper for insertion.
-- Modify `Aiszr/voice_models.py`: add `local_voice` provider slot while keeping Aliyun default.
-- Modify `Aiszr/ui_constants.py`: add local provider endpoint field metadata.
+- Modify `Aiszr/voice_models.py`: add GPT-SoVITS-backed `local_voice` provider while keeping Aliyun default.
+- Modify `Aiszr/ui_constants.py`: add GPT-SoVITS endpoint and reference-audio field metadata.
 - Modify `Aiszr/ui.py`: pass keyword voice insertion requests to the running digital-human pipeline.
 - Create/modify tests under `Aiszr/tests/`.
 
@@ -1054,10 +1054,16 @@ git commit -m "feat: enqueue keyword voice insertions"
 
 ---
 
-### Task 7: Add Local Voice Provider Slot
+### Task 7: Add GPT-SoVITS Local Voice Provider
+
+**User update:** the selected local model is GPT-SoVITS. This task should implement a real GPT-SoVITS HTTP adapter instead of a generic placeholder provider. Keep `local_voice` as the internal provider key for settings compatibility, but label it as GPT-SoVITS in the UI.
+
+**GPT-SoVITS API target:** use the official `api_v2.py` WebAPI shape verified on 2026-06-02. The service normally starts with `python api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml`; synthesis is `GET` or `POST /tts`. Prefer `POST {endpoint}/tts` with JSON fields `text`, `text_lang`, `ref_audio_path`, `prompt_text`, `prompt_lang`, `text_split_method`, `batch_size`, `media_type`, and `streaming_mode`. Default `text_lang`/`prompt_lang` to `zh`, `text_split_method` to `cut5`, `batch_size` to `1`, `media_type` to `wav`, and `streaming_mode` to `False`.
+
+**Clone semantics:** GPT-SoVITS zero-shot synthesis uses a reference WAV rather than a cloud training job. `create_clone()` should validate the sample WAV exists and return its path as `clone_voice_id` with `clone_status="ready"`. `synthesize()` should use `voice_id` as the `ref_audio_path`; if `voice_id` is empty, fall back to the provider config `reference_audio`.
 
 **Files:**
-- Modify: `Aiszr/voice_models.py`
+- Modify: `Aiszr/voice_models.py` (register provider and add GPT-SoVITS config fields: `reference_audio`, `prompt_text`, `prompt_lang`, `text_lang`)
 - Modify: `Aiszr/ui_constants.py`
 - Modify: `Aiszr/voice_manager.py`
 - Create: `Aiszr/tests/test_voice_provider_settings.py`
@@ -1262,7 +1268,7 @@ Spec coverage:
 - LiveTalking lip-sync preserved: Task 2 and Task 5 keep `/humanaudio` upload behavior.
 - Anchor voice keyword synthesis: Task 4 and Task 6.
 - Platform-agnostic speech insertion with current WeChat text injection unchanged: Task 6.
-- Local provider research gate and provider slot: Task 7.
+- GPT-SoVITS local provider registration and HTTP adapter: Task 7.
 - Fallback and queue protection: Task 1, Task 3, Task 5, Task 6.
 
-No unfinished implementation details are intentionally left. The concrete local voice model remains out of scope by design and is represented by a failing-but-registered provider slot with clear user-facing messages.
+No unfinished implementation details are intentionally left. The local provider is GPT-SoVITS and is optional; Aliyun remains the default cloud provider.

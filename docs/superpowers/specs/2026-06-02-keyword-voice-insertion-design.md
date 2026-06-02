@@ -10,7 +10,7 @@ When a keyword auto-reply rule matches a viewer message, Aiszr should synthesize
 
 - Do not rewrite the LiveTalking lip-sync model or avatar preprocessing flow.
 - Do not replace the existing Aliyun Bailian voice provider.
-- Do not choose or integrate a specific local voice model in this design. Local model selection needs a separate research step.
+- Do not require a local voice model for normal operation. GPT-SoVITS is optional; Aliyun Bailian remains the default provider.
 - Do not expose advanced audio-splitting parameters in the initial UI.
 
 ## Current Context
@@ -56,7 +56,7 @@ The voice provider selection applies to both clone and synthesis.
 Initial providers:
 
 - `aliyun_bailian`: existing cloud clone and cloud synthesis provider.
-- `local_voice`: planned provider slot for a locally deployed free/open-source voice model.
+- `local_voice`: locally deployed GPT-SoVITS HTTP provider.
 
 Provider contract:
 
@@ -64,12 +64,13 @@ Provider contract:
 - `create_clone()` creates or records an anchor voice identity.
 - `synthesize()` turns text into a WAV-compatible audio file.
 
-Local voice provider compatibility:
+GPT-SoVITS local provider compatibility:
 
-- If the local model supports persistent voice IDs, `create_clone()` returns a local `clone_voice_id`.
-- If the local model is zero-shot and uses a reference WAV on every synthesis call, `create_clone()` stores the uploaded anchor sample path as the local voice identity.
+- GPT-SoVITS zero-shot synthesis uses a reference WAV and prompt text/language on each synthesis call.
+- `create_clone()` records the uploaded anchor sample path as the local `clone_voice_id` instead of starting a cloud training job.
+- `synthesize()` calls the locally running GPT-SoVITS WebAPI, defaulting to `http://127.0.0.1:9880/tts`.
 
-The local model itself must be selected only after a research gate covering license, Chinese quality, clone capability, Windows deployment, HTTP API stability, output format, runtime speed, and hardware requirements.
+GPT-SoVITS was selected by user preference for the initial local provider. Before coding the adapter, verify the current upstream WebAPI request fields against the official repository because the project API may change between releases.
 
 ## Audio Segmentation
 
@@ -133,7 +134,7 @@ It should not:
 `voice_manager.py`:
 
 - Keep Aliyun provider behavior.
-- Add provider support for a future `local_voice` provider.
+- Add provider support for the optional GPT-SoVITS-backed `local_voice` provider.
 - Ensure keyword synthesis can request the anchor role, not the copilot role.
 
 `ui.py` keyword path:
