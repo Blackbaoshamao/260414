@@ -36,6 +36,7 @@ class DigitalHumanSpeechScheduler:
         duration_fn: Callable[[str | Path], float] | None = None,
         log_callback: Callable[[str], object] | None = None,
         max_insertions: int = 20,
+        initial_delay_path: str | Path | None = None,
     ):
         self._anchor_segments = [Path(path) for path in anchor_segments]
         if not self._anchor_segments:
@@ -50,6 +51,7 @@ class DigitalHumanSpeechScheduler:
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._anchor_index = 0
+        self._initial_delay_path = Path(initial_delay_path) if initial_delay_path else None
 
     def start(self) -> asyncio.Task[None]:
         if self._task is not None:
@@ -89,6 +91,11 @@ class DigitalHumanSpeechScheduler:
         return True
 
     async def _run(self) -> None:
+        if self._initial_delay_path is not None:
+            initial_delay_path = self._initial_delay_path
+            self._initial_delay_path = None
+            await self._wait_for_duration(initial_delay_path)
+
         while not self._stop_event.is_set():
             insertion = self._next_insertion()
             if insertion is not None:

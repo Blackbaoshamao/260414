@@ -16,6 +16,34 @@ async def _wait_until_done(task: asyncio.Task, timeout: float = 0.5) -> None:
 
 
 @pytest.mark.asyncio
+async def test_scheduler_waits_initial_delay_before_first_send():
+    sent = []
+    first_anchor_sent = asyncio.Event()
+
+    async def send_wav(wav_path):
+        sent.append(Path(wav_path).name)
+        first_anchor_sent.set()
+
+    scheduler = DigitalHumanSpeechScheduler(
+        anchor_segments=["a.wav"],
+        send_wav=send_wav,
+        duration_fn=lambda path: 0.03 if Path(path).name == "preflight.wav" else 0.01,
+        initial_delay_path="preflight.wav",
+    )
+
+    scheduler.start()
+    try:
+        await asyncio.sleep(0.01)
+        assert sent == []
+
+        await asyncio.wait_for(first_anchor_sent.wait(), timeout=0.5)
+    finally:
+        await scheduler.stop()
+
+    assert sent == ["a.wav"]
+
+
+@pytest.mark.asyncio
 async def test_insertion_waits_for_current_anchor_before_next_anchor():
     sent = []
     received_paths = []

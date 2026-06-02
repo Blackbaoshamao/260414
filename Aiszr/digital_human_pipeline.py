@@ -156,15 +156,7 @@ class DigitalHumanPipeline:
                 await asyncio.wait_for(self._ffmpeg_proc.wait(), timeout=5)
             self._ffmpeg_proc = None
 
-        if self._speech_scheduler:
-            with contextlib.suppress(Exception):
-                await self._speech_scheduler.stop()
-            self._speech_scheduler = None
-
-        if self._livetalking_runtime:
-            with contextlib.suppress(Exception):
-                await self._livetalking_runtime.stop()
-            self._livetalking_runtime = None
+        await self._stop_livetalking_speech_stack()
 
         self._stop_http_server()
 
@@ -236,18 +228,36 @@ class DigitalHumanPipeline:
             return self._cancel_result()
 
         listen_port = int(runtime_result.get("listen_port") or config.livetalking_listen_port)
+
+        async def send_scheduler_wav(path) -> None:
+            runtime = self._livetalking_runtime
+            if runtime is None:
+                raise RuntimeError("LiveTalking runtime is not running")
+            normalized_wav = await runtime._normalize_wav(str(path), runtime_config)
+            await runtime.send_audio_once(listen_port, normalized_wav)
+
+        first_segment = Path(anchor_audio.segments[0])
+        await send_scheduler_wav(first_segment)
+
         self._speech_scheduler = DigitalHumanSpeechScheduler(
             anchor_segments=anchor_audio.segments,
-            send_wav=lambda path: self._livetalking_runtime.send_audio_once(
-                listen_port, Path(path)
-            ),
+            send_wav=send_scheduler_wav,
             log_callback=self._log,
+            initial_delay_path=first_segment,
         )
-        self._speech_scheduler.start()
+        scheduler_task = self._speech_scheduler.start()
+        scheduler_task.add_done_callback(self._on_speech_scheduler_done)
 
-        self._set_state(PipelineState.CONFIGURING_OBS)
-        stream_url = runtime_result.get("rtmp_url", config.livetalking_push_url)
-        obs_result = await self._configure_obs(config, stream_url)
+        try:
+            self._set_state(PipelineState.CONFIGURING_OBS)
+            stream_url = runtime_result.get("rtmp_url", config.livetalking_push_url)
+            obs_result = await self._configure_obs(config, stream_url)
+        except asyncio.CancelledError:
+            await self._stop_livetalking_speech_stack()
+            raise
+        except Exception:
+            await self._stop_livetalking_speech_stack()
+            raise
 
         self._set_state(PipelineState.STREAMING)
         result = {
@@ -268,6 +278,27 @@ class DigitalHumanPipeline:
             return
         self._log(message)
         self._set_state(PipelineState.ERROR)
+
+    def _on_speech_scheduler_done(self, task: asyncio.Task) -> None:
+        if task.cancelled() or self._cancel_event.is_set():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        self._log(f"Digital human speech scheduler failed: {exc}")
+        self._set_state(PipelineState.ERROR)
+        asyncio.create_task(self._stop_livetalking_speech_stack())
+
+    async def _stop_livetalking_speech_stack(self) -> None:
+        if self._speech_scheduler:
+            with contextlib.suppress(Exception):
+                await self._speech_scheduler.stop()
+            self._speech_scheduler = None
+
+        if self._livetalking_runtime:
+            with contextlib.suppress(Exception):
+                await self._livetalking_runtime.stop()
+            self._livetalking_runtime = None
 
     async def _prepare_anchor_segments(self, config: PipelineConfig) -> AnchorAudioResult:
         audio_result = await self._resolve_livetalking_audio(config)

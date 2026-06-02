@@ -91,6 +91,8 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
     video.write_bytes(b"video")
     segment.write_bytes(b"RIFFxxxxWAVE")
     manual.write_bytes(b"RIFFxxxxWAVE")
+    normalized = tmp_path / "normalized.wav"
+    normalized.write_bytes(b"RIFFxxxxWAVE")
     configured_streams = []
     runtime_instances = []
     scheduler_instances = []
@@ -111,6 +113,11 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
                 "listen_port": "9009",
             }
 
+        async def _normalize_wav(self, wav_path, runtime_config):
+            assert Path(wav_path) in {segment, manual}
+            assert runtime_config.listen_port == 8012
+            return normalized
+
         async def send_audio_once(self, port, wav_path):
             self.sent_audio.append((port, wav_path))
 
@@ -118,16 +125,29 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
             return None
 
     class FakeScheduler:
-        def __init__(self, *, anchor_segments, send_wav, log_callback=None):
+        def __init__(
+            self,
+            *,
+            anchor_segments,
+            send_wav,
+            log_callback=None,
+            initial_delay_path=None,
+        ):
             self.anchor_segments = anchor_segments
             self.send_wav = send_wav
             self.log_callback = log_callback
+            self.initial_delay_path = initial_delay_path
             self.started = False
             scheduler_instances.append(self)
 
         def start(self):
             self.started = True
-            return SimpleNamespace(done=lambda: False)
+            return SimpleNamespace(
+                done=lambda: False,
+                cancelled=lambda: False,
+                exception=lambda: None,
+                add_done_callback=lambda _callback: None,
+            )
 
         async def stop(self):
             return None
@@ -142,6 +162,7 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
         )
 
     async def fake_configure_obs(_config, stream_url):
+        assert runtime_instances[0].sent_audio == [(9009, normalized)]
         configured_streams.append(stream_url)
         return {"ok": True}
 
@@ -168,11 +189,78 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
     scheduler = scheduler_instances[0]
     assert scheduler.anchor_segments == [segment]
     assert scheduler.log_callback is pipeline._log
+    assert scheduler.initial_delay_path == segment
     assert scheduler.started is True
 
     await scheduler.send_wav(manual)
 
-    assert runtime.sent_audio == [(9009, manual)]
+    assert runtime.sent_audio == [(9009, normalized), (9009, normalized)]
+
+
+@pytest.mark.asyncio
+async def test_run_livetalking_cleans_up_scheduler_and_runtime_when_obs_config_raises(
+    monkeypatch, tmp_path
+):
+    pipeline = _pipeline()
+    video = tmp_path / "anchor.mp4"
+    segment = tmp_path / "segment.wav"
+    normalized = tmp_path / "normalized.wav"
+    video.write_bytes(b"video")
+    segment.write_bytes(b"RIFFxxxxWAVE")
+    normalized.write_bytes(b"RIFFxxxxWAVE")
+    events = []
+
+    class FakeRuntime:
+        async def start(self, _runtime_config, wav_path=None, *, loop_audio=True):
+            return {"ok": True, "rtmp_url": "rtmp://127.0.0.1:1935/live/test", "listen_port": 9010}
+
+        async def _normalize_wav(self, wav_path, _runtime_config):
+            return normalized
+
+        async def send_audio_once(self, port, wav_path):
+            events.append(("send", port, wav_path))
+
+        async def stop(self):
+            events.append("runtime.stop")
+
+    class FakeScheduler:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            events.append("scheduler.start")
+            return SimpleNamespace(
+                done=lambda: False,
+                cancelled=lambda: False,
+                exception=lambda: None,
+                add_done_callback=lambda _callback: None,
+            )
+
+        async def stop(self):
+            events.append("scheduler.stop")
+
+    async def fake_prepare(_config):
+        return SimpleNamespace(ok=True, message="ok", source_path=segment, segments=[segment])
+
+    async def failing_configure_obs(_config, _stream_url):
+        raise RuntimeError("obs failed")
+
+    monkeypatch.setattr(pipeline, "_prepare_anchor_segments", fake_prepare)
+    monkeypatch.setattr(pipeline, "_configure_obs", failing_configure_obs)
+    monkeypatch.setattr(livetalking_runtime, "LiveTalkingRuntime", lambda **_kwargs: FakeRuntime())
+    monkeypatch.setattr(dhp, "DigitalHumanSpeechScheduler", FakeScheduler, raising=False)
+
+    with pytest.raises(RuntimeError, match="obs failed"):
+        await pipeline._run_livetalking(PipelineConfig(video_path=str(video), output_dir=str(tmp_path)))
+
+    assert events == [
+        ("send", 9010, normalized),
+        "scheduler.start",
+        "scheduler.stop",
+        "runtime.stop",
+    ]
+    assert pipeline._speech_scheduler is None
+    assert pipeline._livetalking_runtime is None
 
 
 @pytest.mark.asyncio
