@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import wave
 from dataclasses import dataclass
@@ -44,7 +45,7 @@ class DigitalHumanSpeechScheduler:
         self._duration_fn = duration_fn or wav_duration_sec
         self._log_callback = log_callback
         self._insertions: asyncio.Queue[_Insertion] = asyncio.Queue(
-            maxsize=max_insertions
+            maxsize=max(1, int(max_insertions))
         )
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -67,11 +68,10 @@ class DigitalHumanSpeechScheduler:
         if task is None:
             return
 
-        task.cancel()
-        try:
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
-        except asyncio.CancelledError:
-            pass
 
     def enqueue_insertion(self, wav_path, *, text: str = "") -> bool:
         insertion = _Insertion(str(wav_path), text)
