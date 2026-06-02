@@ -130,11 +130,15 @@ async def test_enqueue_keyword_voice_insertion_returns_false_when_pipeline_raise
     assert worker._digital_human_pipeline.calls == [("keyword.wav", "keyword reply")]
 
 
-async def test_dispatch_keyword_reply_attempts_voice_before_comment_and_signal(worker):
+async def test_dispatch_keyword_reply_starts_voice_without_blocking_comment_and_signal(worker):
     events = []
+    voice_started = asyncio.Event()
+    release_voice = asyncio.Event()
 
     async def enqueue_voice(reply):
-        events.append(("voice", reply))
+        voice_started.set()
+        await release_voice.wait()
+        events.append(("voice_done", reply))
         return True
 
     class FakeWechat:
@@ -148,15 +152,24 @@ async def test_dispatch_keyword_reply_attempts_voice_before_comment_and_signal(w
         lambda *args: events.append(("signal", args))
     )
 
-    await worker._dispatch_keyword_reply(
-        "deal", "keyword reply", "buyer", 2, generate_voice=True
+    await asyncio.wait_for(
+        worker._dispatch_keyword_reply(
+            "deal", "keyword reply", "buyer", 2, generate_voice=True
+        ),
+        timeout=0.05,
     )
 
+    await asyncio.wait_for(voice_started.wait(), timeout=0.1)
     assert events == [
-        ("voice", "keyword reply"),
         ("comment", "keyword reply"),
         ("signal", ("deal", "keyword reply", "buyer", 2, True)),
     ]
+    release_voice.set()
+    for _ in range(20):
+        if ("voice_done", "keyword reply") in events:
+            break
+        await asyncio.sleep(0.01)
+    assert ("voice_done", "keyword reply") in events
 
 
 async def test_dispatch_keyword_reply_skips_voice_when_generate_voice_false(worker):
@@ -223,3 +236,58 @@ async def test_on_message_passes_rule_generate_voice_to_dispatch_for_any_platfor
     await asyncio.sleep(0)
 
     assert calls == [("deal", "keyword reply", "buyer", 1, True)]
+
+
+async def test_on_message_non_wechat_text_only_keyword_falls_through_to_ai(worker):
+    dispatch_calls = []
+    ai_calls = []
+
+    class FakeEngine:
+        def match(self, text):
+            assert text == "need deal"
+            return MatchResult(
+                True,
+                KeywordRule(
+                    keyword="deal",
+                    reply="keyword reply",
+                    generate_voice=False,
+                ),
+                "active",
+            )
+
+    class FakeAIEngine:
+        async def process_message(self, msg):
+            ai_calls.append(msg.copy())
+            return None
+
+    class FakeReplayLogger:
+        def log_event(self, event):
+            pass
+
+    class FakeTruthStream:
+        def ingest(self, msg):
+            return []
+
+    async def fake_dispatch(*args, **kwargs):
+        dispatch_calls.append((args, kwargs))
+
+    worker._wechat = None
+    worker._keyword_auto_reply_enabled = True
+    worker._keyword_engine = FakeEngine()
+    worker._keyword_global_cooldown_sec = 0
+    worker._keyword_rate_limit_per_min = 20
+    worker._keyword_last_hit = {}
+    worker._keyword_hit_log.clear()
+    worker._keyword_hit_count = {}
+    worker._replay_logger = FakeReplayLogger()
+    worker._truth_stream = FakeTruthStream()
+    worker._dispatch_keyword_reply = fake_dispatch
+    worker._ai_engine = FakeAIEngine()
+
+    await worker._on_message(
+        {"type": "chat", "content": "need deal", "nickname": "buyer"}
+    )
+    await asyncio.sleep(0)
+
+    assert dispatch_calls == []
+    assert len(ai_calls) == 1

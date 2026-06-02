@@ -1113,7 +1113,8 @@ class CaptureWorker(QObject):
                 logger.warning("OBS: dispatch skipped — _obs_controller is None (configure 从未跑过)")
                 self._logged_obs_none_once = True
 
-        # Keyword auto-reply: match all chat sources; text injection stays gated in dispatch.
+        # Keyword auto-reply: WeChat text rules still inject comments; voice-enabled
+        # rules may run for any captured chat source.
         if (
             msg.get("type") == "chat"
             and self._keyword_auto_reply_enabled
@@ -1121,7 +1122,11 @@ class CaptureWorker(QObject):
         ):
             content = str(msg.get("content", ""))
             result = self._keyword_engine.match(content)
-            if result.matched and result.rule is not None:
+            if (
+                result.matched
+                and result.rule is not None
+                and (msg.get("source") == "wechat" or bool(result.rule.generate_voice))
+            ):
                 rule = result.rule
                 now = time.monotonic()
                 last = self._keyword_last_hit.get(rule.keyword, 0.0)
@@ -1252,10 +1257,7 @@ class CaptureWorker(QObject):
         generate_voice: bool = False,
     ):
         if generate_voice:
-            try:
-                await self._enqueue_keyword_voice_insertion(reply)
-            except Exception as e:
-                logger.warning("Keyword voice insertion unexpected error: {}", e)
+            asyncio.create_task(self._enqueue_keyword_voice_insertion(reply))
         injected = False
         if self._wechat is not None:
             try:
