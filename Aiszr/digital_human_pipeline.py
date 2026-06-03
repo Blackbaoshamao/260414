@@ -350,7 +350,12 @@ class DigitalHumanPipeline:
         return await self._synthesize_audio(config)
 
     async def _synthesize_audio(self, config: PipelineConfig):
-        from voice_manager import DEFAULT_SPEED_RATIO, DEFAULT_VOLUME_RATIO, VOICE_DATA_DIR
+        from voice_manager import (
+            DEFAULT_SPEED_RATIO,
+            DEFAULT_VOLUME_RATIO,
+            VOICE_DATA_DIR,
+            synthesis_voice_id_for_role,
+        )
 
         settings = self._voice_manager.settings
         anchor = settings.anchor
@@ -358,8 +363,8 @@ class DigitalHumanPipeline:
         if not text:
             return VoiceActionResult(False, "主播话术为空，请先在 AI 语音设置中填写主播话术")
 
-        voice_entry = settings.find_voice(anchor.voice_id)
-        if not voice_entry or not voice_entry.clone_voice_id:
+        synth_voice_id = synthesis_voice_id_for_role(settings, anchor)
+        if synth_voice_id is None:
             return VoiceActionResult(False, "主播音色未配置，请先在 AI 语音设置中完成克隆")
 
         output_dir = VOICE_DATA_DIR / "anchor" / "generated"
@@ -377,7 +382,7 @@ class DigitalHumanPipeline:
         volume = DEFAULT_VOLUME_RATIO * (anchor.volume_gain / 100.0)
         result = await provider.synthesize(
             text=text,
-            voice_id=voice_entry.clone_voice_id,
+            voice_id=synth_voice_id,
             model_id=settings.model_id,
             output_dir=output_dir,
             speed=speed,

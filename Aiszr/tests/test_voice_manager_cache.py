@@ -190,6 +190,56 @@ async def test_synthesize_role_to_file_uses_anchor_clone_without_playback(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_synthesize_role_to_file_allows_local_reference_audio_without_clone(tmp_path, monkeypatch):
+    reference = tmp_path / "reference.wav"
+    with wave.open(str(reference), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(24000)
+        wav_file.writeframes(b"\x00\x00" * 32)
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "local_voice",
+            "model_id": "gpt-sovits-v2",
+            "api": {
+                "local_voice": {
+                    "endpoint": "http://127.0.0.1:9880",
+                    "reference_audio": str(reference),
+                }
+            },
+            "anchor": {"voice_id": ""},
+        }
+    )
+    manager = VoiceManager(settings)
+    out = tmp_path / "keyword.wav"
+    calls = []
+
+    class FakeProvider:
+        async def synthesize(
+            self,
+            text,
+            voice_id,
+            output_dir,
+            *,
+            model_id="",
+            speed=DEFAULT_SPEED_RATIO,
+            volume=DEFAULT_VOLUME_RATIO,
+        ):
+            calls.append((text, voice_id, output_dir, model_id, speed, volume))
+            return VoiceActionResult(True, "ok", output_path=str(out))
+
+    monkeypatch.setattr(manager, "provider", lambda: FakeProvider())
+
+    result = await manager.synthesize_role_to_file("keyword", "anchor")
+
+    assert result.ok is True
+    assert result.output_path == str(out)
+    assert calls[0][1] == ""
+    assert result.clone_voice_id == str(reference)
+    assert result.clone_status == "ready"
+
+
+@pytest.mark.asyncio
 async def test_synthesize_role_to_file_treats_training_clone_as_not_ready(monkeypatch):
     settings = VoiceSettings()
     voice = VoiceEntry(

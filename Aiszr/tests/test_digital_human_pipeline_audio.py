@@ -6,8 +6,10 @@ import pytest
 
 import digital_human_pipeline as dhp
 import livetalking_runtime
+import voice_manager as voice_manager_module
 from digital_human_pipeline import DigitalHumanPipeline, PipelineConfig
 from voice_manager import VoiceActionResult
+from voice_models import VoiceRoleConfig, VoiceSettings
 
 
 class _VoiceManager:
@@ -79,6 +81,71 @@ async def test_prepare_anchor_segments_falls_back_to_full_wav_when_segmenter_fai
     assert result.source_path == source
     assert result.segments == [source]
     assert any("segment" in message.lower() for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_synthesize_audio_allows_local_reference_audio_without_clone(
+    monkeypatch, tmp_path
+):
+    reference = tmp_path / "reference.wav"
+    reference.write_bytes(b"RIFFxxxxWAVE")
+    out = tmp_path / "anchor.wav"
+    out.write_bytes(b"RIFFxxxxWAVE")
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "local_voice",
+            "model_id": "gpt-sovits-v2",
+            "api": {
+                "local_voice": {
+                    "endpoint": "http://127.0.0.1:9880",
+                    "reference_audio": str(reference),
+                }
+            },
+        }
+    )
+    settings.anchor = VoiceRoleConfig(voice_id="")
+    settings.anchor_script = "anchor script"
+    calls = []
+
+    class FakeProvider:
+        async def synthesize(
+            self,
+            *,
+            text,
+            voice_id,
+            model_id,
+            output_dir,
+            speed,
+            volume,
+        ):
+            calls.append(
+                {
+                    "text": text,
+                    "voice_id": voice_id,
+                    "model_id": model_id,
+                    "output_dir": output_dir,
+                    "speed": speed,
+                    "volume": volume,
+                }
+            )
+            return VoiceActionResult(True, "ok", output_path=str(out))
+
+    class FakeVoiceManager:
+        def __init__(self):
+            self.settings = settings
+
+        def provider(self):
+            return FakeProvider()
+
+    monkeypatch.setattr(voice_manager_module, "VOICE_DATA_DIR", tmp_path / "voice")
+    pipeline = DigitalHumanPipeline(FakeVoiceManager())
+
+    result = await pipeline._synthesize_audio(PipelineConfig(output_dir=str(tmp_path)))
+
+    assert result.ok is True
+    assert result.output_path == str(out)
+    assert calls[0]["voice_id"] == ""
+    assert calls[0]["text"] == "anchor script"
 
 
 @pytest.mark.asyncio

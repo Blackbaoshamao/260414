@@ -135,7 +135,10 @@ def default_anchor_wav_path(
     if not text.strip():
         return None
     voice = settings.find_voice(role.voice_id)
-    if voice is None or not voice.clone_voice_id:
+    voice_id = voice.clone_voice_id if voice and voice.clone_voice_id else ""
+    if not voice_id:
+        voice_id = provider_reference_audio(settings)
+    if not voice_id:
         return None
     # Volume must mirror AliyunBailianProvider.synthesize: float ratio → int 0-100.
     # Otherwise the cache key diverges from the one used at synthesis time.
@@ -144,11 +147,29 @@ def default_anchor_wav_path(
         output_dir=VOICE_DATA_DIR / role_name / "generated",
         provider=settings.provider,
         model=settings.model_id,
-        voice_id=voice.clone_voice_id,
+        voice_id=voice_id,
         text=text,
         speed=_role_speed_ratio(role),
         volume=volume_value,
     )
+
+
+def provider_reference_audio(settings: "VoiceSettings") -> str:
+    if settings.provider != "local_voice":
+        return ""
+    api_cfg = settings.api.get("local_voice")
+    if api_cfg is None:
+        return ""
+    return str(api_cfg.reference_audio or "").strip()
+
+
+def synthesis_voice_id_for_role(settings: "VoiceSettings", role: VoiceRoleConfig) -> str | None:
+    voice = settings.find_voice(role.voice_id)
+    if voice and voice.clone_voice_id:
+        return voice.clone_voice_id
+    if provider_reference_audio(settings):
+        return ""
+    return None
 
 
 def _is_valid_audio_cache(path: Path) -> bool:
@@ -881,14 +902,16 @@ class VoiceManager:
             role = self._role(role_name)
         except KeyError:
             return VoiceActionResult(False, "试听角色无效")
+        provider = self.provider()
+        reference_audio = provider_reference_audio(self.settings)
         voice = self._voice(role.voice_id)
-        if voice is None:
+        if voice is None and not reference_audio:
             return VoiceActionResult(False, "当前角色未选择声音")
-        if not voice.clone_voice_id:
+        synth_voice_id = voice.clone_voice_id if voice else ""
+        if not synth_voice_id and not reference_audio:
             return VoiceActionResult(False, "当前音色还没有可用的云端声音 ID，请先点击开始克隆")
 
-        provider = self.provider()
-        if voice.clone_status == "training":
+        if voice and synth_voice_id and voice.clone_status == "training":
             resolved = await provider.resolve_clone(voice.clone_voice_id)
             if not resolved.ok:
                 voice.clone_status = "error"
@@ -902,6 +925,7 @@ class VoiceManager:
             if resolved.clone_status == "ready":
                 if resolved.clone_voice_id:
                     voice.clone_voice_id = resolved.clone_voice_id
+                    synth_voice_id = resolved.clone_voice_id
                 voice.clone_status = "ready"
                 voice.last_error = ""
             elif resolved.clone_status == "training":
@@ -932,7 +956,7 @@ class VoiceManager:
 
         result = await provider.synthesize(
             text=text,
-            voice_id=voice.clone_voice_id,
+            voice_id=synth_voice_id,
             model_id=self.settings.model_id,
             output_dir=VOICE_DATA_DIR / role_name / "generated",
             speed=_role_speed_ratio(role),
@@ -940,8 +964,8 @@ class VoiceManager:
         )
         if not result.ok:
             return result
-        result.clone_voice_id = voice.clone_voice_id
-        result.clone_status = voice.clone_status
+        result.clone_voice_id = synth_voice_id or reference_audio
+        result.clone_status = voice.clone_status if voice and synth_voice_id else "ready"
         return result
 
     async def synthesize_and_play(self, text: str, role_name: str) -> VoiceActionResult:

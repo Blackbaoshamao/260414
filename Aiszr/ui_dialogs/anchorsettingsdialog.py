@@ -192,7 +192,7 @@ class AnchorSettingsDialog(QDialog):
         self.voice_settings_changed.emit(self._voice_settings_state.to_dict())
 
         # Delete old generated audio files, keep only the latest
-        from voice_manager import VOICE_DATA_DIR
+        from voice_manager import VOICE_DATA_DIR, synthesis_voice_id_for_role
         gen_dir = VOICE_DATA_DIR / "anchor" / "generated"
         if gen_dir.exists():
             for f in gen_dir.glob("*"):
@@ -200,8 +200,7 @@ class AnchorSettingsDialog(QDialog):
 
         # Generate new audio via TTS
         anchor = self._voice_settings_state.anchor
-        voice_entry = self._voice_settings_state.find_voice(anchor.voice_id)
-        if not voice_entry or not voice_entry.clone_voice_id:
+        if synthesis_voice_id_for_role(self._voice_settings_state, anchor) is None:
             self._status_label.setText("请先在 AI 语音设置中完成主播音色克隆")
             return
 
@@ -220,10 +219,17 @@ class AnchorSettingsDialog(QDialog):
         try:
             from pathlib import Path as _P
             import asyncio
-            from voice_manager import DEFAULT_SPEED_RATIO, DEFAULT_VOLUME_RATIO, VOICE_DATA_DIR
+            from voice_manager import (
+                DEFAULT_SPEED_RATIO,
+                DEFAULT_VOLUME_RATIO,
+                VOICE_DATA_DIR,
+                synthesis_voice_id_for_role,
+            )
 
             anchor = settings.anchor
-            voice_entry = settings.find_voice(anchor.voice_id)
+            synth_voice_id = synthesis_voice_id_for_role(settings, anchor)
+            if synth_voice_id is None:
+                raise ValueError("请先在 AI 语音设置中完成主播音色克隆")
             output_dir = VOICE_DATA_DIR / "anchor" / "generated"
             output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -237,7 +243,7 @@ class AnchorSettingsDialog(QDialog):
                 volume = DEFAULT_VOLUME_RATIO * (anchor.volume_gain / 100.0)
                 return await provider.synthesize(
                     text=settings.anchor_script.strip(),
-                    voice_id=voice_entry.clone_voice_id,
+                    voice_id=synth_voice_id,
                     model_id=settings.model_id,
                     output_dir=output_dir,
                     speed=speed,
@@ -288,4 +294,3 @@ class AnchorSettingsDialog(QDialog):
 # ---------------------------------------------------------------------------
 # CopilotSettingsDialog
 # ---------------------------------------------------------------------------
-
