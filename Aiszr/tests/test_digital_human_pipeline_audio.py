@@ -149,6 +149,56 @@ async def test_synthesize_audio_allows_local_reference_audio_without_clone(
 
 
 @pytest.mark.asyncio
+async def test_synthesize_audio_ignores_stale_fixed_anchor_wav_for_local_voice(
+    monkeypatch, tmp_path
+):
+    reference = tmp_path / "reference.wav"
+    reference.write_bytes(b"RIFFxxxxWAVE")
+    voice_data_dir = tmp_path / "voice"
+    fixed_anchor = voice_data_dir / "anchor" / "generated" / "anchor.wav"
+    fixed_anchor.parent.mkdir(parents=True)
+    fixed_anchor.write_bytes(b"RIFFstaleWAVE")
+    new_audio = tmp_path / "new-anchor.wav"
+    new_audio.write_bytes(b"RIFFnew__WAVE")
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "local_voice",
+            "model_id": "gpt-sovits-v2",
+            "api": {
+                "local_voice": {
+                    "endpoint": "http://127.0.0.1:9880",
+                    "reference_audio": str(reference),
+                }
+            },
+        }
+    )
+    settings.anchor = VoiceRoleConfig(voice_id="")
+    settings.anchor_script = "anchor script"
+    calls = []
+
+    class FakeProvider:
+        async def synthesize(self, **kwargs):
+            calls.append(kwargs)
+            return VoiceActionResult(True, "ok", output_path=str(new_audio))
+
+    class FakeVoiceManager:
+        def __init__(self):
+            self.settings = settings
+
+        def provider(self):
+            return FakeProvider()
+
+    monkeypatch.setattr(voice_manager_module, "VOICE_DATA_DIR", voice_data_dir)
+    pipeline = DigitalHumanPipeline(FakeVoiceManager())
+
+    result = await pipeline._synthesize_audio(PipelineConfig(output_dir=str(tmp_path)))
+
+    assert result.ok is True
+    assert result.output_path == str(new_audio)
+    assert calls and calls[0]["voice_id"] == ""
+
+
+@pytest.mark.asyncio
 async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_scheduler(
     monkeypatch, tmp_path
 ):

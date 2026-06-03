@@ -199,3 +199,81 @@ async def test_gpt_sovits_synthesize_reports_json_error(tmp_path, monkeypatch):
 
     assert result.ok is False
     assert "ref_audio_path is required" in result.message
+
+
+@pytest.mark.asyncio
+async def test_gpt_sovits_cache_changes_when_prompt_or_language_changes(tmp_path, monkeypatch):
+    reference = tmp_path / "anchor.wav"
+    _write_wav(reference)
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        content = _wav_bytes(tmp_path)
+        headers = {"content-type": "audio/wav"}
+        text = ""
+
+        def json(self):
+            return {}
+
+    def fake_post(url, *, json, timeout):
+        calls.append(json)
+        return FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=fake_post))
+    first = LocalVoiceProvider(
+        VoiceProviderApiConfig(
+            endpoint="http://127.0.0.1:9880",
+            prompt_text="第一段参考文本",
+            prompt_lang="zh",
+            text_lang="zh",
+        )
+    )
+    second = LocalVoiceProvider(
+        VoiceProviderApiConfig(
+            endpoint="http://127.0.0.1:9880",
+            prompt_text="second prompt",
+            prompt_lang="en",
+            text_lang="en",
+        )
+    )
+
+    first_result = await first.synthesize("same text", str(reference), tmp_path)
+    second_result = await second.synthesize("same text", str(reference), tmp_path)
+
+    assert first_result.ok is True
+    assert second_result.ok is True
+    assert len(calls) == 2
+    assert calls[0]["prompt_text"] == "第一段参考文本"
+    assert calls[1]["prompt_text"] == "second prompt"
+    assert calls[1]["prompt_lang"] == "en"
+    assert calls[1]["text_lang"] == "en"
+    assert first_result.output_path != second_result.output_path
+
+
+@pytest.mark.asyncio
+async def test_gpt_sovits_endpoint_accepts_tts_path(tmp_path, monkeypatch):
+    reference = tmp_path / "anchor.wav"
+    _write_wav(reference)
+    urls = []
+
+    class FakeResponse:
+        status_code = 200
+        content = _wav_bytes(tmp_path)
+        headers = {"content-type": "audio/wav"}
+        text = ""
+
+        def json(self):
+            return {}
+
+    def fake_post(url, *, json, timeout):
+        urls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=fake_post))
+    provider = LocalVoiceProvider(VoiceProviderApiConfig(endpoint="http://127.0.0.1:9880/tts"))
+
+    result = await provider.synthesize("测试", str(reference), tmp_path)
+
+    assert result.ok is True
+    assert urls == ["http://127.0.0.1:9880/tts"]

@@ -117,6 +117,20 @@ def _cached_synthesis_path(
 cached_synthesis_path = _cached_synthesis_path
 
 
+def _local_voice_cache_key(config: VoiceProviderApiConfig, ref_audio_path: str) -> str:
+    return json.dumps(
+        {
+            "ref_audio_path": ref_audio_path,
+            "prompt_text": str(config.prompt_text or "").strip(),
+            "prompt_lang": str(config.prompt_lang or "zh").strip() or "zh",
+            "text_lang": str(config.text_lang or "zh").strip() or "zh",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def default_anchor_wav_path(
     settings: "VoiceSettings", role_name: str = "anchor"
 ) -> Path | None:
@@ -140,6 +154,10 @@ def default_anchor_wav_path(
         voice_id = provider_reference_audio(settings)
     if not voice_id:
         return None
+    if settings.provider == "local_voice":
+        api_cfg = settings.api.get("local_voice")
+        if api_cfg is not None:
+            voice_id = _local_voice_cache_key(api_cfg, voice_id)
     # Volume must mirror AliyunBailianProvider.synthesize: float ratio → int 0-100.
     # Otherwise the cache key diverges from the one used at synthesis time.
     volume_value = max(0, min(100, round(50 * _role_volume_ratio(role))))
@@ -784,11 +802,12 @@ class LocalVoiceProvider(VoiceProviderBase):
         model = model_id if model_id in self.list_models() else self.list_models()[0]
         speed_factor = max(0.1, min(3.0, float(speed or DEFAULT_SPEED_RATIO)))
         volume_value = max(0, min(100, round(50 * float(volume or DEFAULT_VOLUME_RATIO))))
+        cache_voice_id = _local_voice_cache_key(self.config, ref_audio_path)
         output_path = _cached_synthesis_path(
             output_dir,
             self.provider_name,
             model,
-            ref_audio_path,
+            cache_voice_id,
             text,
             speed_factor,
             volume_value,
@@ -797,7 +816,7 @@ class LocalVoiceProvider(VoiceProviderBase):
         if _is_valid_audio_cache(output_path):
             return VoiceActionResult(True, "使用缓存试听音频", output_path=str(output_path))
 
-        endpoint = self.credential("endpoint").rstrip("/")
+        endpoint = self._tts_url(self.credential("endpoint"))
         payload = {
             "text": text,
             "text_lang": self.config.text_lang or "zh",
@@ -815,7 +834,7 @@ class LocalVoiceProvider(VoiceProviderBase):
             try:
                 import httpx
 
-                resp = httpx.post(f"{endpoint}/tts", json=payload, timeout=120.0)
+                resp = httpx.post(endpoint, json=payload, timeout=120.0)
                 content_type = resp.headers.get("content-type", "")
                 content = getattr(resp, "content", b"") or b""
                 if resp.status_code == 200 and content and _looks_like_audio_response(content, content_type):
@@ -832,6 +851,13 @@ class LocalVoiceProvider(VoiceProviderBase):
         if ok and _is_valid_audio_cache(actual_path):
             return VoiceActionResult(True, "GPT-SoVITS 语音已生成", output_path=str(actual_path))
         return VoiceActionResult(False, f"GPT-SoVITS 请求失败：{_short_detail(detail)}")
+
+    @staticmethod
+    def _tts_url(endpoint: str) -> str:
+        normalized = endpoint.strip().rstrip("/")
+        if normalized.lower().endswith("/tts"):
+            return normalized
+        return f"{normalized}/tts"
 
 
 PROVIDER_TYPES = {
