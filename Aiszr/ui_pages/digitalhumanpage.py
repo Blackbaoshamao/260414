@@ -343,7 +343,7 @@ class DigitalHumanPage(SiPage):
         try:
             import asyncio
             from voice_manager import VoiceManager
-            mgr = VoiceManager()
+            mgr = VoiceManager(self._voice_settings_state)
             loop = asyncio.new_event_loop()
             try:
                 loop.run_until_complete(
@@ -544,4 +544,3 @@ class DigitalHumanPage(SiPage):
             self._audio_status_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none; font-size: 13px;")
         if hasattr(self, "_status_label"):
             self._status_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none; font-size: 13px;")
-

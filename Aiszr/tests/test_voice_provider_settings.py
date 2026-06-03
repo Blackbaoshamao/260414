@@ -1,16 +1,21 @@
+import ast
 import sys
 import wave
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import voice_manager as voice_manager_module
 from ui_constants import _VOICE_PROVIDER_API_FIELDS
-from voice_manager import LocalVoiceProvider
+from voice_manager import LocalVoiceProvider, default_anchor_wav_path
 from voice_models import (
     VOICE_MODELS,
     VOICE_PROVIDER_LABELS,
     VOICE_PROVIDERS,
+    VoiceEntry,
     VoiceProviderApiConfig,
+    VoiceRoleConfig,
     VoiceSettings,
 )
 
@@ -277,3 +282,82 @@ async def test_gpt_sovits_endpoint_accepts_tts_path(tmp_path, monkeypatch):
 
     assert result.ok is True
     assert urls == ["http://127.0.0.1:9880/tts"]
+
+
+@pytest.mark.asyncio
+async def test_default_anchor_wav_path_matches_gpt_sovits_cache_key(tmp_path, monkeypatch):
+    reference = tmp_path / "anchor.wav"
+    _write_wav(reference)
+    voice_data_dir = tmp_path / "voice"
+    monkeypatch.setattr(voice_manager_module, "VOICE_DATA_DIR", voice_data_dir)
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "local_voice",
+            "model_id": "gpt-sovits-v2",
+            "api": {
+                "local_voice": {
+                    "endpoint": "http://127.0.0.1:9880",
+                    "reference_audio": str(reference),
+                    "prompt_text": "参考文本",
+                    "prompt_lang": "zh",
+                    "text_lang": "zh",
+                }
+            },
+        }
+    )
+    settings.anchor_script = "same text"
+    settings.voices.append(
+        VoiceEntry(
+            id="anchor-voice",
+            name="anchor",
+            clone_voice_id=str(reference),
+            clone_status="ready",
+        )
+    )
+    settings.anchor = VoiceRoleConfig(voice_id="anchor-voice")
+
+    class FakeResponse:
+        status_code = 200
+        content = _wav_bytes(tmp_path)
+        headers = {"content-type": "audio/wav"}
+        text = ""
+
+        def json(self):
+            return {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "httpx",
+        SimpleNamespace(post=lambda *args, **kwargs: FakeResponse()),
+    )
+    provider = LocalVoiceProvider(settings.api["local_voice"])
+
+    result = await provider.synthesize(
+        settings.anchor_script,
+        str(reference),
+        voice_data_dir / "anchor" / "generated",
+        model_id=settings.model_id,
+    )
+
+    assert result.ok is True
+    assert Path(result.output_path) == default_anchor_wav_path(settings)
+
+
+def test_digitalhuman_preview_passes_settings_to_voice_manager():
+    source = Path("ui_pages/digitalhumanpage.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    preview = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_do_preview_synth"
+    )
+    calls = [
+        node
+        for node in ast.walk(preview)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "VoiceManager"
+    ]
+
+    assert len(calls) == 1
+    assert len(calls[0].args) == 1
