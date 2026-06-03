@@ -19,12 +19,17 @@ except ImportError:  # Keep imports working until dependencies are installed.
     load_dotenv = None
 
 from audio_output import play_wav_file, is_audio_stopped
+from local_voice_runtime import (
+    DEFAULT_LOCAL_VOICE_ENDPOINT,
+    ensure_local_voice_runtime,
+)
 from voice_models import (
     VOICE_MODELS,
     VoiceEntry,
     VoiceProviderApiConfig,
     VoiceRoleConfig,
     VoiceSettings,
+    voice_entry_is_compatible,
 )
 
 from app_paths import app_dir
@@ -148,11 +153,8 @@ def default_anchor_wav_path(
         text = ""
     if not text.strip():
         return None
-    voice = settings.find_voice(role.voice_id)
-    voice_id = voice.clone_voice_id if voice and voice.clone_voice_id else ""
-    if not voice_id:
-        voice_id = provider_reference_audio(settings)
-    if not voice_id:
+    voice_id = synthesis_voice_id_for_role(settings, role)
+    if voice_id is None or not voice_id:
         return None
     if settings.provider == "local_voice":
         api_cfg = settings.api.get("local_voice")
@@ -183,6 +185,13 @@ def provider_reference_audio(settings: "VoiceSettings") -> str:
 
 def synthesis_voice_id_for_role(settings: "VoiceSettings", role: VoiceRoleConfig) -> str | None:
     voice = settings.find_voice(role.voice_id)
+    if voice and not voice_entry_is_compatible(voice, settings.provider):
+        return None
+    if voice and settings.provider == "local_voice":
+        if voice.clone_voice_id:
+            return voice.clone_voice_id
+        if voice.sample_wav_path:
+            return voice.sample_wav_path
     if voice and voice.clone_voice_id:
         return voice.clone_voice_id
     if provider_reference_audio(settings):
@@ -745,12 +754,19 @@ class LocalVoiceProvider(VoiceProviderBase):
     provider_label = "GPT-SoVITS 本地语音"
 
     def required_fields(self) -> set[str]:
-        return {"endpoint"}
+        return set()
 
     def credential(self, field: str, *env_names: str) -> str:
         if field == "endpoint":
-            return super().credential(field, "GPT_SOVITS_ENDPOINT", "LOCAL_VOICE_ENDPOINT")
+            return (
+                super().credential(field, "GPT_SOVITS_ENDPOINT", "LOCAL_VOICE_ENDPOINT")
+                or DEFAULT_LOCAL_VOICE_ENDPOINT
+            )
         return super().credential(field, *env_names)
+
+    async def validate_credentials(self) -> VoiceActionResult:
+        ready = await ensure_local_voice_runtime(self.credential("endpoint"))
+        return VoiceActionResult(ready.ok, ready.message)
 
     async def create_clone(
         self,
@@ -793,6 +809,10 @@ class LocalVoiceProvider(VoiceProviderBase):
             return VoiceActionResult(False, "GPT-SoVITS 缺少参考音频，请先完成主播音色克隆或填写参考音频路径")
         if not Path(ref_audio_path).expanduser().is_file():
             return VoiceActionResult(False, f"GPT-SoVITS 参考音频不存在：{ref_audio_path}")
+
+        ready = await ensure_local_voice_runtime(self.credential("endpoint"))
+        if not ready.ok:
+            return VoiceActionResult(False, ready.message)
 
         missing = self.missing_credentials()
         if missing:
@@ -913,6 +933,7 @@ class VoiceManager:
         if result.ok and result.clone_voice_id:
             if isinstance(provider, AliyunBailianProvider):
                 self.settings.model_id = provider._target_model(self.settings.model_id)
+            voice.provider = self.settings.provider
             voice.clone_voice_id = result.clone_voice_id
             voice.clone_status = result.clone_status or "ready"
             voice.last_error = "" if voice.clone_status != "error" else result.message
@@ -931,11 +952,15 @@ class VoiceManager:
         provider = self.provider()
         reference_audio = provider_reference_audio(self.settings)
         voice = self._voice(role.voice_id)
+        if voice is not None and not voice_entry_is_compatible(voice, self.settings.provider):
+            return VoiceActionResult(False, "当前音色不适用于所选语音供应商")
         if voice is None and not reference_audio:
             return VoiceActionResult(False, "当前角色未选择声音")
-        synth_voice_id = voice.clone_voice_id if voice else ""
+        synth_voice_id = synthesis_voice_id_for_role(self.settings, role)
+        if synth_voice_id is None:
+            synth_voice_id = ""
         if not synth_voice_id and not reference_audio:
-            return VoiceActionResult(False, "当前音色还没有可用的云端声音 ID，请先点击开始克隆")
+            return VoiceActionResult(False, "当前音色还没有可用的音色引用，请先点击开始克隆")
 
         if voice and synth_voice_id and voice.clone_status == "training":
             resolved = await provider.resolve_clone(voice.clone_voice_id)

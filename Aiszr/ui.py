@@ -688,6 +688,7 @@ class CaptureWorker(QObject):
 
     async def _async_cleanup(self):
         from audio_output import stop_all_audio
+        from local_voice_runtime import stop_local_voice_runtime
         stop_all_audio()
         if self._digital_human_pipeline:
             try:
@@ -709,6 +710,8 @@ class CaptureWorker(QObject):
                 await self._tts_worker.stop()
             except Exception:
                 pass
+        with contextlib.suppress(Exception):
+            await stop_local_voice_runtime()
         if self._wechat:
             try:
                 await self._wechat.stop()

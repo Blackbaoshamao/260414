@@ -37,6 +37,11 @@ data/
 Aiszr/data/
 Aiszr/wechat_browser_data/
 
+# Local bundled model/runtime directories
+Aiszr/GPT-SoVITS/
+Aiszr/external_deps/
+external_deps/
+
 # Generated document/export outputs
 pdf_pages/
 thesis_extracted/

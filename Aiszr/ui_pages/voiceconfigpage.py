@@ -18,6 +18,7 @@ from voice_models import VOICE_MODELS
 from voice_models import VOICE_PROVIDERS
 from voice_models import VOICE_PROVIDER_LABELS
 from voice_models import VoiceSettings
+from voice_models import compatible_voice_entries
 
 
 from pathlib import Path
@@ -589,6 +590,7 @@ class VoiceConfigPage(SiPage):
         self._voice_settings_state.provider = provider
         self._apply_provider_models(provider, "")
         self._load_provider_api_inputs(provider)
+        self._populate_voice_combos(force=True)
         self._active_provider = provider
 
     def set_dialog_mode(self, enabled: bool) -> None:
@@ -612,7 +614,10 @@ class VoiceConfigPage(SiPage):
         return True, f"样本时长 {duration:.2f}s，校验通过"
 
     def _populate_voice_combos(self, force: bool = False):
-        voices = self._voice_settings_state.voices
+        voices = compatible_voice_entries(
+            self._voice_settings_state.voices,
+            self._voice_settings_state.provider,
+        )
         for combo, role_key in (
             (self._anchor_voice_combo, "anchor"),
             (self._copilot_voice_combo, "copilot"),
@@ -1098,4 +1103,3 @@ class VoiceConfigPage(SiPage):
 
     def shutdown(self) -> None:
         self._avatar_preprocessor.stop()
-

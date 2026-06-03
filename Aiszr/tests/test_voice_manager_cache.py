@@ -240,6 +240,92 @@ async def test_synthesize_role_to_file_allows_local_reference_audio_without_clon
 
 
 @pytest.mark.asyncio
+async def test_synthesize_role_to_file_uses_selected_local_voice_sample(tmp_path, monkeypatch):
+    sample = tmp_path / "sample.wav"
+    with wave.open(str(sample), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(24000)
+        wav_file.writeframes(b"\x00\x00" * 32)
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "local_voice",
+            "model_id": "gpt-sovits-v2",
+            "voices": [
+                {
+                    "id": "local-anchor",
+                    "name": "anchor",
+                    "provider": "local_voice",
+                    "sample_wav_path": str(sample),
+                    "clone_status": "idle",
+                }
+            ],
+            "anchor": {"voice_id": "local-anchor"},
+        }
+    )
+    manager = VoiceManager(settings)
+    out = tmp_path / "keyword.wav"
+    calls = []
+
+    class FakeProvider:
+        async def synthesize(
+            self,
+            text,
+            voice_id,
+            output_dir,
+            *,
+            model_id="",
+            speed=DEFAULT_SPEED_RATIO,
+            volume=DEFAULT_VOLUME_RATIO,
+        ):
+            calls.append((text, voice_id, output_dir, model_id, speed, volume))
+            return VoiceActionResult(True, "ok", output_path=str(out))
+
+    monkeypatch.setattr(manager, "provider", lambda: FakeProvider())
+
+    result = await manager.synthesize_role_to_file("keyword", "anchor")
+
+    assert result.ok is True
+    assert calls[0][1] == str(sample)
+    assert result.clone_voice_id == str(sample)
+    assert result.clone_status == "idle"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_role_to_file_rejects_incompatible_voice_provider(monkeypatch):
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "local_voice",
+            "voices": [
+                {
+                    "id": "aliyun-anchor",
+                    "name": "anchor",
+                    "provider": "aliyun_bailian",
+                    "clone_voice_id": "cloud-voice",
+                    "clone_status": "ready",
+                }
+            ],
+            "anchor": {"voice_id": "aliyun-anchor"},
+        }
+    )
+    manager = VoiceManager(settings)
+    synth_calls = []
+
+    class FakeProvider:
+        async def synthesize(self, *args, **kwargs):
+            synth_calls.append((args, kwargs))
+            return VoiceActionResult(True, "unexpected")
+
+    monkeypatch.setattr(manager, "provider", lambda: FakeProvider())
+
+    result = await manager.synthesize_role_to_file("keyword", "anchor")
+
+    assert result.ok is False
+    assert "供应商" in result.message
+    assert synth_calls == []
+
+
+@pytest.mark.asyncio
 async def test_synthesize_role_to_file_treats_training_clone_as_not_ready(monkeypatch):
     settings = VoiceSettings()
     voice = VoiceEntry(

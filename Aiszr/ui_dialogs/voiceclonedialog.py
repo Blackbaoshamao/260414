@@ -1,5 +1,7 @@
 """VoiceCloneDialog — extracted from ui.py."""
 from __future__ import annotations
+import os
+import wave
 from app_paths import app_dir
 from ui_constants import DEFAULT_VOICE_SETTINGS
 from ui_settings import _load_settings
@@ -26,6 +28,21 @@ from ui_settings import _save_settings
 from ui_components import MacButton, MacLineEdit
 
 
+def _validate_wav_duration(path: str, max_seconds: float = 15.0) -> tuple[bool, str]:
+    try:
+        with wave.open(path, "rb") as wav_file:
+            frames = wav_file.getnframes()
+            rate = wav_file.getframerate()
+            duration = (frames / float(rate)) if rate else 0.0
+    except Exception:
+        return False, "WAV 文件读取失败，请重新选择有效的 wav 文件"
+    if duration <= 0:
+        return False, "WAV 文件时长无效，请重新选择"
+    if duration > max_seconds:
+        return False, f"WAV 时长 {duration:.2f}s，超过 {max_seconds:.0f}s 上限"
+    return True, f"样本时长 {duration:.2f}s，校验通过"
+
+
 class VoiceCloneDialog(QDialog):
     voice_action_requested = pyqtSignal(object)
     voice_settings_changed = pyqtSignal(object)
@@ -48,7 +65,7 @@ class VoiceCloneDialog(QDialog):
         self._title_label.setFont(theme.FONT_TITLE_2)
         layout.addWidget(self._title_label)
 
-        self._subtitle_label = QLabel("选择本地 wav 文件，使用阿里云在线克隆新声音", self)
+        self._subtitle_label = QLabel("选择本地 wav 文件，保存为可用音色", self)
         layout.addWidget(self._subtitle_label)
 
         self._name_edit = MacLineEdit(placeholder="输入声音名称")
@@ -115,7 +132,7 @@ class VoiceCloneDialog(QDialog):
         path, _ = QFileDialog.getOpenFileName(self, "选择 wav 样本", "", "WAV Files (*.wav)")
         if not path:
             return
-        ok, message = VoiceConfigPage._validate_wav_duration(path, 15.0)
+        ok, message = _validate_wav_duration(path, 15.0)
         if not ok:
             self._status_label.setText(message)
             return
@@ -149,7 +166,7 @@ class VoiceCloneDialog(QDialog):
         if not os.path.exists(sample_ref):
             self._status_label.setText(f"样本文件不存在：{sample_ref}")
             return
-        ok, message = VoiceConfigPage._validate_wav_duration(sample_ref, 15.0)
+        ok, message = _validate_wav_duration(sample_ref, 15.0)
         if not ok:
             self._status_label.setText(message)
             return
@@ -157,6 +174,7 @@ class VoiceCloneDialog(QDialog):
         entry = VoiceEntry(
             id=VoiceEntry.make_id(),
             name=name,
+            provider=self._voice_settings_state.provider,
             sample_wav_path=sample_ref,
         )
         self._voice_settings_state.voices.append(entry)
@@ -213,4 +231,3 @@ class VoiceCloneDialog(QDialog):
 # ---------------------------------------------------------------------------
 # AnchorSettingsDialog
 # ---------------------------------------------------------------------------
-

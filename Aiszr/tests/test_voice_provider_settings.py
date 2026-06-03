@@ -8,6 +8,7 @@ import pytest
 
 import voice_manager as voice_manager_module
 from ui_constants import _VOICE_PROVIDER_API_FIELDS
+from local_voice_runtime import DEFAULT_LOCAL_VOICE_ENDPOINT
 from voice_manager import LocalVoiceProvider, default_anchor_wav_path
 from voice_models import (
     VOICE_MODELS,
@@ -18,6 +19,14 @@ from voice_models import (
     VoiceRoleConfig,
     VoiceSettings,
 )
+
+
+@pytest.fixture(autouse=True)
+def _local_runtime_ready(monkeypatch):
+    async def ready(endpoint=DEFAULT_LOCAL_VOICE_ENDPOINT):
+        return SimpleNamespace(ok=True, message="ready", endpoint=endpoint)
+
+    monkeypatch.setattr(voice_manager_module, "ensure_local_voice_runtime", ready)
 
 
 def _write_wav(path):
@@ -38,6 +47,37 @@ def test_gpt_sovits_provider_is_registered():
     assert "local_voice" in VOICE_PROVIDERS
     assert VOICE_PROVIDER_LABELS["local_voice"] == "GPT-SoVITS 本地语音"
     assert VOICE_MODELS["local_voice"] == ("gpt-sovits-v2",)
+
+
+def test_voice_settings_default_to_local_voice():
+    settings = VoiceSettings()
+
+    assert settings.provider == "local_voice"
+    assert settings.model_id == "gpt-sovits-v2"
+    assert settings.api["local_voice"].endpoint == DEFAULT_LOCAL_VOICE_ENDPOINT
+    assert settings.api["local_voice"].prompt_lang == "zh"
+    assert settings.api["local_voice"].text_lang == "zh"
+
+
+def test_voice_settings_invalid_provider_falls_back_to_local_voice():
+    settings = VoiceSettings.from_dict({"provider": "missing", "model_id": "missing"})
+
+    assert settings.provider == "local_voice"
+    assert settings.model_id == "gpt-sovits-v2"
+
+
+def test_voice_settings_preserve_saved_aliyun_provider():
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "aliyun_bailian",
+            "model_id": "qwen3-tts-vc-2026-01-22",
+            "api": {"aliyun_bailian": {"api_key": "saved-key"}},
+        }
+    )
+
+    assert settings.provider == "aliyun_bailian"
+    assert settings.model_id == "qwen3-tts-vc-2026-01-22"
+    assert settings.api["aliyun_bailian"].api_key == "saved-key"
 
 
 def test_voice_settings_accepts_gpt_sovits_config_fields(tmp_path):
@@ -71,16 +111,16 @@ def test_voice_settings_accepts_gpt_sovits_config_fields(tmp_path):
     assert settings.to_dict()["api"]["local_voice"]["reference_audio"] == str(reference)
 
 
-def test_gpt_sovits_ui_fields_are_exposed():
+def test_gpt_sovits_ui_fields_are_hidden_for_auto_config():
     fields = _VOICE_PROVIDER_API_FIELDS["local_voice"]["fields"]
 
-    assert set(fields) == {"endpoint", "reference_audio", "prompt_text", "prompt_lang", "text_lang"}
+    assert fields == {}
 
 
-def test_gpt_sovits_provider_validation_requires_endpoint():
+def test_gpt_sovits_provider_does_not_require_manual_endpoint():
     result = LocalVoiceProvider(VoiceProviderApiConfig()).missing_credentials()
 
-    assert result == ["endpoint"]
+    assert result == []
 
 
 @pytest.mark.asyncio

@@ -236,9 +236,15 @@ class VoiceApiDialog(QDialog):
         hint = provider_cfg.get("hint", "")
         provider_label = VOICE_PROVIDER_LABELS.get(provider, provider)
         self._api_provider_title.setText(f"当前供应商：{provider_label}。{hint}".strip())
+        has_fields = bool(field_specs)
+        self._api_provider_title.setVisible(has_fields)
+        self._api_fields_wrap.setVisible(has_fields)
         for panel in self._api_field_panels.values():
             self._api_fields_layout.removeWidget(panel)
             panel.hide()
+        if not has_fields:
+            self._api_fields_wrap.setFixedHeight(0)
+            return
         for field_key, panel in self._api_field_panels.items():
             field_meta = field_specs.get(field_key)
             if field_meta is None:

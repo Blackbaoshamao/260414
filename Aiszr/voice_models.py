@@ -5,6 +5,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
+from local_voice_runtime import DEFAULT_LOCAL_VOICE_ENDPOINT
+
 
 VOICE_PROVIDERS = ("aliyun_bailian", "local_voice")
 VOICE_PROVIDER_LABELS = {
@@ -15,6 +17,8 @@ VOICE_MODELS = {
     "aliyun_bailian": ("qwen3-tts-vc-2026-01-22",),
     "local_voice": ("gpt-sovits-v2",),
 }
+DEFAULT_VOICE_PROVIDER = "local_voice"
+DEFAULT_VOICE_MODEL = VOICE_MODELS[DEFAULT_VOICE_PROVIDER][0]
 
 
 @dataclass(slots=True)
@@ -65,10 +69,32 @@ class VoiceProviderApiConfig:
         }
 
 
+def default_provider_api_config(provider: str) -> VoiceProviderApiConfig:
+    cfg = VoiceProviderApiConfig()
+    if provider == "local_voice":
+        cfg.endpoint = DEFAULT_LOCAL_VOICE_ENDPOINT
+        cfg.prompt_lang = "zh"
+        cfg.text_lang = "zh"
+    return cfg
+
+
+def default_provider_api_configs() -> dict[str, VoiceProviderApiConfig]:
+    return {name: default_provider_api_config(name) for name in VOICE_PROVIDERS}
+
+
+def apply_provider_api_defaults(provider: str, cfg: VoiceProviderApiConfig) -> VoiceProviderApiConfig:
+    if provider == "local_voice":
+        cfg.endpoint = cfg.endpoint or DEFAULT_LOCAL_VOICE_ENDPOINT
+        cfg.prompt_lang = cfg.prompt_lang or "zh"
+        cfg.text_lang = cfg.text_lang or "zh"
+    return cfg
+
+
 @dataclass(slots=True)
 class VoiceEntry:
     id: str = ""
     name: str = ""
+    provider: str = ""
     sample_wav_path: str = ""
     clone_voice_id: str = ""
     clone_status: str = "idle"
@@ -81,6 +107,7 @@ class VoiceEntry:
         return cls(
             id=str(value.get("id", "")).strip(),
             name=str(value.get("name", "")).strip(),
+            provider=str(value.get("provider", "")).strip(),
             sample_wav_path=str(value.get("sample_wav_path", "")).strip(),
             clone_voice_id=str(value.get("clone_voice_id", "")).strip(),
             clone_status=str(value.get("clone_status", "idle")).strip() or "idle",
@@ -91,6 +118,7 @@ class VoiceEntry:
         return {
             "id": self.id,
             "name": self.name,
+            "provider": self.provider,
             "sample_wav_path": self.sample_wav_path,
             "clone_voice_id": self.clone_voice_id,
             "clone_status": self.clone_status,
@@ -100,6 +128,16 @@ class VoiceEntry:
     @staticmethod
     def make_id() -> str:
         return uuid.uuid4().hex[:12]
+
+
+def voice_entry_is_compatible(voice: VoiceEntry, provider: str) -> bool:
+    if not voice.provider:
+        return True
+    return voice.provider == provider
+
+
+def compatible_voice_entries(voices: list[VoiceEntry], provider: str) -> list[VoiceEntry]:
+    return [voice for voice in voices if voice_entry_is_compatible(voice, provider)]
 
 
 @dataclass(slots=True)
@@ -134,12 +172,10 @@ class VoiceRoleConfig:
 
 @dataclass(slots=True)
 class VoiceSettings:
-    provider: str = "aliyun_bailian"
-    model_id: str = "qwen3-tts-vc-2026-01-22"
+    provider: str = DEFAULT_VOICE_PROVIDER
+    model_id: str = DEFAULT_VOICE_MODEL
     api: dict[str, VoiceProviderApiConfig] = field(
-        default_factory=lambda: {
-            name: VoiceProviderApiConfig() for name in VOICE_PROVIDERS
-        }
+        default_factory=default_provider_api_configs
     )
     voices: list[VoiceEntry] = field(default_factory=list)
     anchor: VoiceRoleConfig = field(default_factory=VoiceRoleConfig)
@@ -155,15 +191,18 @@ class VoiceSettings:
     def from_dict(cls, value: object) -> "VoiceSettings":
         if not isinstance(value, dict):
             return cls()
-        provider = str(value.get("provider", "aliyun_bailian")).strip() or "aliyun_bailian"
+        provider = str(value.get("provider", DEFAULT_VOICE_PROVIDER)).strip() or DEFAULT_VOICE_PROVIDER
         if provider not in VOICE_PROVIDERS:
-            provider = "aliyun_bailian"
+            provider = DEFAULT_VOICE_PROVIDER
         model_id = str(value.get("model_id", "")).strip() or VOICE_MODELS[provider][0]
         if model_id not in VOICE_MODELS[provider]:
             model_id = VOICE_MODELS[provider][0]
         api_raw = value.get("api", {})
         api = {
-            name: VoiceProviderApiConfig.from_dict(api_raw.get(name, {}) if isinstance(api_raw, dict) else {})
+            name: apply_provider_api_defaults(
+                name,
+                VoiceProviderApiConfig.from_dict(api_raw.get(name, {}) if isinstance(api_raw, dict) else {}),
+            )
             for name in VOICE_PROVIDERS
         }
         voices_raw = value.get("voices", [])
@@ -204,6 +243,7 @@ class VoiceSettings:
             entry = VoiceEntry(
                 id=VoiceEntry.make_id(),
                 name=name or role_key,
+                provider=self.provider,
                 sample_wav_path=sample,
                 clone_voice_id=clone_id,
                 clone_status=status,
