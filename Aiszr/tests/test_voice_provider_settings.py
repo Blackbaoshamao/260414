@@ -344,7 +344,8 @@ async def test_default_anchor_wav_path_matches_gpt_sovits_cache_key(tmp_path, mo
 
 
 def test_digitalhuman_preview_passes_settings_to_voice_manager():
-    source = Path("ui_pages/digitalhumanpage.py").read_text(encoding="utf-8")
+    source_path = Path(__file__).resolve().parents[1] / "ui_pages" / "digitalhumanpage.py"
+    source = source_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     preview = next(
         node
