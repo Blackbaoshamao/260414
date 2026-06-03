@@ -183,7 +183,7 @@ async def test_gpt_sovits_synthesize_posts_to_tts_and_writes_wav(tmp_path, monke
     assert payload["ref_audio_path"] == str(reference)
     assert payload["prompt_text"] == "参考音频文本"
     assert payload["prompt_lang"] == "zh"
-    assert payload["text_split_method"] == "cut5"
+    assert payload["text_split_method"] == "cut0"
     assert payload["batch_size"] == 1
     assert payload["media_type"] == "wav"
     assert payload["streaming_mode"] is False

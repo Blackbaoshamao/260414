@@ -38,6 +38,7 @@ VOICE_DATA_DIR = APP_DIR / "data" / "voice"
 
 DEFAULT_SPEED_RATIO = 1.2
 DEFAULT_VOLUME_RATIO = 1.2
+LOCAL_VOICE_TEXT_SPLIT_METHOD = "cut0"
 QWEN_VOICE_ENROLLMENT_MODEL = "qwen-voice-enrollment"
 QWEN_TTS_VC_MODEL = "qwen3-tts-vc-2026-01-22"
 QWEN_TTS_VC_MODELS = {QWEN_TTS_VC_MODEL}
@@ -128,6 +129,7 @@ def _local_voice_cache_key(config: VoiceProviderApiConfig, ref_audio_path: str) 
             "ref_audio_path": ref_audio_path,
             "prompt_text": str(config.prompt_text or "").strip(),
             "prompt_lang": str(config.prompt_lang or "zh").strip() or "zh",
+            "text_split_method": LOCAL_VOICE_TEXT_SPLIT_METHOD,
             "text_lang": str(config.text_lang or "zh").strip() or "zh",
         },
         ensure_ascii=False,
@@ -843,7 +845,7 @@ class LocalVoiceProvider(VoiceProviderBase):
             "ref_audio_path": ref_audio_path,
             "prompt_text": self.config.prompt_text,
             "prompt_lang": self.config.prompt_lang or "zh",
-            "text_split_method": "cut5",
+            "text_split_method": LOCAL_VOICE_TEXT_SPLIT_METHOD,
             "batch_size": 1,
             "media_type": "wav",
             "streaming_mode": False,
