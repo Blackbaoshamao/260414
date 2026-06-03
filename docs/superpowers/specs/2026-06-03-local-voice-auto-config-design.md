@@ -6,6 +6,8 @@ Date: 2026-06-03
 
 Aiszr should ship with a bundled GPT-SoVITS local voice runtime so users can enable AI voice replies without manually configuring voice API fields. The app should default to local voice, let users choose one cloned anchor timbre from the existing voice library, and use that same timbre for anchor-script speech and keyword-triggered speech insertions.
 
+After the app is launched, all normal user operations for this flow must happen inside Aiszr. Users should not need to open a terminal, manually start GPT-SoVITS, edit config files, or paste local voice API parameters.
+
 ## Non-Goals
 
 - Do not remove Aliyun Bailian support; keep it available for advanced or fallback use.
@@ -25,6 +27,15 @@ The default packaged experience is:
 6. Anchor-script speech and keyword voice insertions both use the selected timbre.
 
 The GPT-SoVITS API configuration fields are hidden in the normal UI. Users should not need to type endpoint, reference-audio path, prompt text, prompt language, or synthesis language.
+
+The complete operational loop must be available in-app:
+
+- Create or import a cloned anchor timbre.
+- Select the timbre from the anchor voice dropdown.
+- Generate the anchor script audio.
+- Start the LiveTalking digital-human stream.
+- Enable keyword voice replies.
+- Generate and insert keyword reply speech into the running stream.
 
 ## Bundled GPT-SoVITS Runtime
 
@@ -139,6 +150,7 @@ Focused tests should cover:
 
 - Fresh packaged app launches with GPT-SoVITS as the default voice provider.
 - User does not need to fill endpoint, reference audio, prompt language, or text language.
+- User does not need to run any command-line service to use local voice in the packaged app.
 - User can choose one cloned anchor timbre from a dropdown.
 - Anchor script and keyword insertion use the selected timbre.
 - Keyword insertion still waits for the current short anchor segment to finish and then lip-syncs through LiveTalking.
