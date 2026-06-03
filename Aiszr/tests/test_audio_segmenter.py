@@ -104,6 +104,32 @@ def test_returns_source_wav_when_no_splittable_silence(tmp_path):
     assert result == [src]
 
 
+def test_default_config_does_not_split_three_second_anchor_phrases(tmp_path):
+    src = _write_wav(
+        tmp_path / "source.wav",
+        _tone_frames(3000) + _silence_frames(400) + _tone_frames(6500),
+    )
+    output_dir = tmp_path / "segments"
+
+    result = AudioSegmenter().segment(src, output_dir)
+
+    assert result == [src]
+
+
+def test_default_config_splits_after_six_second_anchor_phrase(tmp_path):
+    src = _write_wav(
+        tmp_path / "source.wav",
+        _tone_frames(6500) + _silence_frames(400) + _tone_frames(6500),
+    )
+    output_dir = tmp_path / "segments"
+
+    result = AudioSegmenter().segment(src, output_dir)
+
+    assert [path.name for path in result] == ["segment_0001.wav", "segment_0002.wav"]
+    assert 6800 <= _duration_ms(result[0]) <= 7000
+    assert 6400 <= _duration_ms(result[1]) <= 6600
+
+
 def test_stereo_wav_segments_and_preserves_params(tmp_path):
     src = _write_stereo_tone_and_silence(tmp_path / "source.wav")
     output_dir = tmp_path / "segments"

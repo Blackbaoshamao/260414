@@ -7,8 +7,8 @@ from pathlib import Path
 @dataclass
 class AudioSegmenterConfig:
     silence_threshold_db: float = -25.0
-    min_segment_ms: int = 2000
-    min_silence_ms: int = 50
+    min_segment_ms: int = 6000
+    min_silence_ms: int = 300
     scan_step_ms: int = 10
     max_retained_silence_ms: int = 1000
     max_segments: int = 300
