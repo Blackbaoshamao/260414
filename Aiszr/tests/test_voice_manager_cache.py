@@ -1,6 +1,7 @@
 import pytest
 import wave
 
+import audio_output
 import voice_manager as voice_manager_module
 from voice_manager import (
     DEFAULT_SPEED_RATIO,
@@ -187,6 +188,32 @@ async def test_synthesize_role_to_file_uses_anchor_clone_without_playback(tmp_pa
     assert result.clone_voice_id == "clone-anchor"
     assert result.clone_status == "ready"
     assert playback_calls == []
+
+
+@pytest.mark.asyncio
+async def test_synthesize_and_play_restarts_after_previous_stop(tmp_path, monkeypatch):
+    manager = VoiceManager(VoiceSettings())
+    output_path = tmp_path / "preview.wav"
+    playback_calls = []
+
+    async def fake_synthesize(text, role_name):
+        return VoiceActionResult(True, "ok", output_path=str(output_path))
+
+    async def fake_play(path):
+        playback_calls.append(path)
+
+    monkeypatch.setattr(manager, "synthesize_role_to_file", fake_synthesize)
+    monkeypatch.setattr(voice_manager_module, "play_wav_file", fake_play)
+    audio_output.stop_all_audio()
+
+    try:
+        result = await manager.synthesize_and_play("试听文本", "anchor")
+    finally:
+        audio_output.reset_audio_stop()
+
+    assert result.ok is True
+    assert result.message == "试听已播放"
+    assert playback_calls == [str(output_path)]
 
 
 @pytest.mark.asyncio

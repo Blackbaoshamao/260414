@@ -21,6 +21,10 @@ def stop_all_audio() -> None:
             winsound.PlaySound(None, winsound.SND_PURGE)
 
 
+def reset_audio_stop() -> None:
+    _stop_event.clear()
+
+
 def is_audio_stopped() -> bool:
     return _stop_event.is_set()
 

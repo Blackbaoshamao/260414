@@ -976,16 +976,32 @@ class CaptureWorker(QObject):
             return
         if action_type == "preview":
             text = str(action.get("text", "")).strip()
+            preview_token = action.get("preview_token")
             if role not in {"anchor", "copilot"}:
                 result = VoiceActionResult(False, "试听角色无效")
-                self.voice_action_finished.emit({"type": action_type, "role": role, "result": result})
+                self.voice_action_finished.emit({
+                    "type": action_type,
+                    "role": role,
+                    "preview_token": preview_token,
+                    "result": result,
+                })
                 return
             if not text:
                 result = VoiceActionResult(False, "试听文本为空")
-                self.voice_action_finished.emit({"type": action_type, "role": role, "result": result})
+                self.voice_action_finished.emit({
+                    "type": action_type,
+                    "role": role,
+                    "preview_token": preview_token,
+                    "result": result,
+                })
                 return
             result = await self._voice_manager.synthesize_and_play(text, role)
-            self.voice_action_finished.emit({"type": action_type, "role": role, "result": result})
+            self.voice_action_finished.emit({
+                "type": action_type,
+                "role": role,
+                "preview_token": preview_token,
+                "result": result,
+            })
             return
 
     async def _async_connect_room(self, url: str):

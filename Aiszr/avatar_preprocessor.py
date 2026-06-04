@@ -226,7 +226,7 @@ class AvatarPreprocessManager:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=120,
+            timeout=180,
         )
         result = _last_json(proc.stdout)
         if proc.returncode != 0 or not result.get("ok"):

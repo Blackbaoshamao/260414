@@ -8,6 +8,7 @@ from typing import Awaitable, Callable, Iterable
 
 
 MIN_WAIT_SEC = 0.05
+SEND_AHEAD_SEC = 0.15
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,15 @@ class DigitalHumanSpeechScheduler:
                 self._log(f"digital human anchor send failed: {anchor_path}: {exc}")
                 raise
 
-            await self._wait_for_duration(anchor_path)
+            duration = self._duration_sec(anchor_path)
+            send_ahead_wait = max(0, duration - SEND_AHEAD_SEC)
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=max(send_ahead_wait, MIN_WAIT_SEC),
+                )
+            except asyncio.TimeoutError:
+                pass
 
     def _next_insertion(self) -> _Insertion | None:
         try:

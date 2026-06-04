@@ -10,6 +10,7 @@ from ui_theme import _mix_hex_colors
 from ui_theme import _placeholder_h
 from ui_theme import apply_theme
 from voice_models import VoiceSettings
+from audio_output import play_wav_file, is_audio_stopped
 
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, pyqtProperty, Qt, QTimer, QRect, QSize, QPropertyAnimation, QEasingCurve, QPointF
@@ -40,6 +41,7 @@ class DigitalHumanPage(SiPage):
     back_requested = pyqtSignal()
     digital_human_start_requested = pyqtSignal(object)
     digital_human_stop_requested = pyqtSignal()
+    _preview_state_changed = pyqtSignal(str, str)  # (button_text, state)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -50,6 +52,7 @@ class DigitalHumanPage(SiPage):
         self._obs_host = "127.0.0.1"
         self._obs_port = 4455
         self._obs_password = ""
+        self._preview_state_changed.connect(self._apply_preview_state)
 
         container = SiTitledWidgetGroup(self)
         container.setSpacing(16)
@@ -325,12 +328,30 @@ class DigitalHumanPage(SiPage):
             self._gen_audio_btn.setEnabled(True)
 
     def _on_preview_audio(self):
+        logger.info("preview clicked, state={}", self._preview_btn.property("state"))
+        if self._preview_btn.property("state") == "playing":
+            from audio_output import stop_all_audio
+            stop_all_audio()
+            self._preview_btn.setText("▶ 试听")
+            self._preview_btn.setProperty("state", "")
+            self._audio_status_label.setText("已停止")
+            return
+
+        from voice_manager import VOICE_DATA_DIR
+        cached = VOICE_DATA_DIR / "anchor" / "generated" / "anchor.wav"
+        has_cached = cached.is_file()
+
         script = self._script_edit.toPlainText().strip()
-        if not script:
+        if not has_cached and not script:
             self._audio_status_label.setText("请先输入或生成主播话术")
             return
-        self._preview_btn.setEnabled(False)
-        self._audio_status_label.setText("正在合成试听...")
+
+        self._preview_btn.setText("停止")
+        self._preview_btn.setProperty("state", "playing")
+        self._preview_btn.update()
+        logger.info("preview button text set to: {}", self._preview_btn.text())
+        self._audio_status_label.setText("正在播放..." if has_cached else "正在合成试听...")
+
         import threading
         thread = threading.Thread(
             target=self._do_preview_synth,
@@ -339,23 +360,44 @@ class DigitalHumanPage(SiPage):
         )
         thread.start()
 
+    def _apply_preview_state(self, button_text: str, state: str):
+        self._preview_btn.setText(button_text)
+        self._preview_btn.setProperty("state", state)
+        self._preview_btn.update()
+
     def _do_preview_synth(self, script: str):
         try:
             import asyncio
-            from voice_manager import VoiceManager
-            mgr = VoiceManager(self._voice_settings_state)
+            from voice_manager import VOICE_DATA_DIR
+            cached = VOICE_DATA_DIR / "anchor" / "generated" / "anchor.wav"
+            if cached.is_file():
+                wav_path = str(cached)
+            else:
+                from voice_manager import VoiceManager
+                mgr = VoiceManager(self._voice_settings_state)
+                loop = asyncio.new_event_loop()
+                try:
+                    result = loop.run_until_complete(
+                        mgr.synthesize_role_to_file(script, 'anchor')
+                    )
+                finally:
+                    loop.close()
+                if not result.ok:
+                    self._preview_state_changed.emit("▶ 试听", "")
+                    return
+                wav_path = result.output_path
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(
-                    mgr.synthesize_and_play(script, 'anchor')
-                )
+                if not is_audio_stopped():
+                    loop.run_until_complete(play_wav_file(wav_path))
             finally:
                 loop.close()
-            self._audio_status_label.setText("试听完成")
+            if not is_audio_stopped():
+                self._audio_status_label.setText("试听完成")
         except Exception as e:
             self._audio_status_label.setText(f"试听失败: {e}")
         finally:
-            self._preview_btn.setEnabled(True)
+            self._preview_state_changed.emit("▶ 试听", "")
 
     def load_voice_settings(self, value: object):
         if isinstance(value, dict):

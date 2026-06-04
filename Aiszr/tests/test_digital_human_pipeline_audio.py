@@ -238,7 +238,7 @@ async def test_run_livetalking_starts_runtime_without_audio_loop_and_starts_sche
             assert runtime_config.listen_port == 8012
             return normalized
 
-        async def send_audio_once(self, port, wav_path):
+        async def send_audio_once(self, port, wav_path, *, client=None):
             self.sent_audio.append((port, wav_path))
 
         async def stop(self):
@@ -335,7 +335,7 @@ async def test_run_livetalking_cleans_up_runtime_when_first_audio_send_fails(
         async def _normalize_wav(self, wav_path, _runtime_config):
             return Path(wav_path)
 
-        async def send_audio_once(self, port, wav_path):
+        async def send_audio_once(self, port, wav_path, *, client=None):
             events.append(("send", port, wav_path))
             raise RuntimeError("upload failed")
 
@@ -473,7 +473,7 @@ async def test_run_livetalking_cleans_up_scheduler_and_runtime_when_obs_config_r
         async def _normalize_wav(self, wav_path, _runtime_config):
             return normalized
 
-        async def send_audio_once(self, port, wav_path):
+        async def send_audio_once(self, port, wav_path, *, client=None):
             events.append(("send", port, wav_path))
 
         async def stop(self):

@@ -85,6 +85,9 @@ class VoiceConfigPage(SiPage):
         self._voice_runtime_payload = {}
         self._voice_settings_state = VoiceSettings.from_dict(DEFAULT_VOICE_SETTINGS.to_dict())
         self._active_provider = self._voice_settings_state.provider
+        self._preview_playing_role: str | None = None
+        self._preview_token = 0
+        self._active_preview_token: int | None = None
         self._api_field_panels: dict[str, QWidget] = {}
         self._api_field_labels: dict[str, QLabel] = {}
         self._api_field_edits: dict[str, QLineEdit] = {}
@@ -296,6 +299,9 @@ class VoiceConfigPage(SiPage):
         self._anchor_delete_btn.setFixedHeight(34)
         anchor_params_layout.addWidget(self._anchor_delete_btn)
         container.addWidget(anchor_params)
+        self._copilot_runtime_status = QLabel("最近播报：无", self)
+        self._copilot_runtime_status.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none;")
+        container.addWidget(self._copilot_runtime_status)
 
         container.addTitle("助播音色")
         copilot_card = SiOptionCardLinear(self)
@@ -341,9 +347,6 @@ class VoiceConfigPage(SiPage):
         self._copilot_delete_btn.setFixedHeight(34)
         copilot_params_layout.addWidget(self._copilot_delete_btn)
         container.addWidget(copilot_params)
-        self._copilot_runtime_status = QLabel("最近播报：无", self)
-        self._copilot_runtime_status.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none;")
-        container.addWidget(self._copilot_runtime_status)
 
         # ------------------------------------------------------------------
         # Streaming console (merged from DigitalHumanPage)
@@ -662,6 +665,17 @@ class VoiceConfigPage(SiPage):
     def _role_combo(self, role_key: str) -> QComboBox:
         return self._anchor_voice_combo if role_key == "anchor" else self._copilot_voice_combo
 
+    def _preview_button(self, role_key: str):
+        return self._anchor_preview_btn if role_key == "anchor" else self._copilot_preview_btn
+
+    def _set_preview_button_playing(self, role_key: str, playing: bool):
+        if role_key not in {"anchor", "copilot"}:
+            return
+        button = self._preview_button(role_key)
+        button.setText("⏸ 暂停" if playing else "▶ 试听")
+        button.setProperty("state", "playing" if playing else "")
+        button.update()
+
     def _set_voice_status(self, text: str):
         self._copilot_runtime_status.setText(text)
 
@@ -676,6 +690,17 @@ class VoiceConfigPage(SiPage):
         combo = self._role_combo(role_key)
         voice_id = str(combo.currentData() or "").strip()
         role_label = self._ROLE_LABELS.get(role_key, role_key)
+        if self._preview_playing_role:
+            from audio_output import stop_all_audio
+
+            stopped_role = self._preview_playing_role
+            stop_all_audio()
+            self._preview_playing_role = None
+            self._active_preview_token = None
+            self._set_preview_button_playing(stopped_role, False)
+            if stopped_role == role_key:
+                self._set_voice_status(f"{role_label}试听已暂停")
+                return
         if not voice_id:
             self._set_voice_status(f"{role_label}试听失败：请先选择音色")
             return
@@ -684,8 +709,17 @@ class VoiceConfigPage(SiPage):
             self._set_voice_status("主播试听失败：请先在主播设置中保存主播话术")
             return
         self._save_voice_settings()
-        self._set_voice_status(f"{role_label}试听生成中...")
-        self.voice_action_requested.emit({"type": "preview", "role": role_key, "text": text})
+        self._set_voice_status(f"{role_label}音频播放中")
+        self._preview_token += 1
+        self._active_preview_token = self._preview_token
+        self._preview_playing_role = role_key
+        self._set_preview_button_playing(role_key, True)
+        self.voice_action_requested.emit({
+            "type": "preview",
+            "role": role_key,
+            "text": text,
+            "preview_token": self._preview_token,
+        })
 
     def _delete_selected_voice(self, role_key: str):
         combo = self._role_combo(role_key)
@@ -788,6 +822,13 @@ class VoiceConfigPage(SiPage):
             self._voice_status_label.setText(result.message)
         elif action_type == "preview":
             role = str(payload.get("role", "")).strip()
+            preview_token = payload.get("preview_token")
+            if preview_token is not None and preview_token != self._active_preview_token:
+                return
+            if self._preview_playing_role == role:
+                self._preview_playing_role = None
+                self._active_preview_token = None
+            self._set_preview_button_playing(role, False)
             role_label = self._ROLE_LABELS.get(role, role or "语音")
             prefix = "试听完成" if result.ok else "试听失败"
             self._set_voice_status(f"{role_label}{prefix}：{result.message}")

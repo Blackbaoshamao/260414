@@ -18,7 +18,7 @@ try:
 except ImportError:  # Keep imports working until dependencies are installed.
     load_dotenv = None
 
-from audio_output import play_wav_file, is_audio_stopped
+from audio_output import play_wav_file, is_audio_stopped, reset_audio_stop
 from local_voice_runtime import (
     DEFAULT_LOCAL_VOICE_ENDPOINT,
     ensure_local_voice_runtime,
@@ -1022,6 +1022,7 @@ class VoiceManager:
         return result
 
     async def synthesize_and_play(self, text: str, role_name: str) -> VoiceActionResult:
+        reset_audio_stop()
         result = await self.synthesize_role_to_file(text, role_name)
         if not result.ok or not result.output_path:
             return result

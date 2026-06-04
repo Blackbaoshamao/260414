@@ -211,7 +211,11 @@ class LiveTalkingRuntime:
         out_dir = Path(config.output_dir) if config.output_dir else project_root() / "Aiszr" / "data" / "digital_human"
         out_dir = out_dir / "livetalking_audio"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "active_16k_mono.wav"
+        stem = hashlib.md5(str(src.resolve()).encode()).hexdigest()[:12]
+        out_path = out_dir / f"{stem}_16k_mono.wav"
+
+        if out_path.is_file() and out_path.stat().st_mtime > src.stat().st_mtime:
+            return out_path
 
         cmd = [
             _resolve_ffmpeg_path(),

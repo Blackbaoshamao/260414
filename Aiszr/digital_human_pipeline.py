@@ -7,6 +7,8 @@ import contextlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+import httpx
 from pathlib import Path
 from threading import Thread
 from typing import Callable
@@ -91,6 +93,7 @@ class DigitalHumanPipeline:
         self._http_thread: Thread | None = None
         self._livetalking_runtime = None
         self._speech_scheduler = None
+        self._scheduler_client: httpx.AsyncClient | None = None
         self._cancel_event = asyncio.Event()
 
     @property
@@ -239,7 +242,10 @@ class DigitalHumanPipeline:
             if runtime is None:
                 raise RuntimeError("LiveTalking runtime is not running")
             normalized_wav = await runtime._normalize_wav(str(path), runtime_config)
-            await runtime.send_audio_once(listen_port, normalized_wav)
+            await runtime.send_audio_once(listen_port, normalized_wav, client=scheduler_client)
+
+        scheduler_client = httpx.AsyncClient(timeout=30.0)
+        self._scheduler_client = scheduler_client
 
         try:
             first_segment = Path(anchor_audio.segments[0])
@@ -303,6 +309,11 @@ class DigitalHumanPipeline:
             with contextlib.suppress(Exception):
                 await self._speech_scheduler.stop()
             self._speech_scheduler = None
+
+        if self._scheduler_client:
+            with contextlib.suppress(Exception):
+                await self._scheduler_client.aclose()
+            self._scheduler_client = None
 
         if self._livetalking_runtime:
             with contextlib.suppress(Exception):

@@ -402,3 +402,77 @@ def test_digitalhuman_preview_passes_settings_to_voice_manager():
 
     assert len(calls) == 1
     assert len(calls[0].args) == 1
+
+
+def test_voice_config_preview_click_can_stop_current_audio():
+    source_path = Path(__file__).resolve().parents[1] / "ui_pages" / "voiceconfigpage.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    preview = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_on_preview_clicked"
+    )
+    call_names = {
+        node.func.id
+        for node in ast.walk(preview)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert "stop_all_audio" in call_names
+    assert "_preview_playing_role" in source
+    assert "_preview_token" in source
+    assert "preview_token" in source
+    assert "⏸ 暂停" in source
+
+
+def test_voice_worker_echoes_preview_token_for_stale_result_filtering():
+    source_path = Path(__file__).resolve().parents[1] / "ui.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    run_action = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_async_run_voice_action"
+    )
+
+    assert "preview_token" in ast.unparse(run_action)
+
+
+def test_voice_config_preview_status_uses_audio_playing_text():
+    source_path = Path(__file__).resolve().parents[1] / "ui_pages" / "voiceconfigpage.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    preview = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_on_preview_clicked"
+    )
+    preview_source = ast.unparse(preview)
+
+    assert "音频播放中" in preview_source
+    assert "试听生成中" not in preview_source
+
+
+def test_voice_config_runtime_status_is_below_anchor_voice_section():
+    source_path = Path(__file__).resolve().parents[1] / "ui_pages" / "voiceconfigpage.py"
+    source = source_path.read_text(encoding="utf-8")
+    anchor_params_index = source.index("container.addWidget(anchor_params)")
+    status_index = source.index("container.addWidget(self._copilot_runtime_status)")
+    copilot_title_index = source.index('container.addTitle("助播音色")')
+
+    assert anchor_params_index < status_index < copilot_title_index
+
+
+def test_digitalhuman_preview_state_signal_has_slot():
+    source_path = Path(__file__).resolve().parents[1] / "ui_pages" / "digitalhumanpage.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    method_names = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    assert "_preview_state_changed.connect(self._apply_preview_state)" in source
+    assert "_apply_preview_state" in method_names
