@@ -159,6 +159,9 @@ class VoiceCloneDialog(QDialog):
         if not name:
             self._status_label.setText("请输入声音名称")
             return
+        if any(v.name == name for v in self._voice_settings_state.voices):
+            self._status_label.setText(f"声音名称「{name}」已存在，请使用其他名称")
+            return
         sample_ref = self._sample_path_edit.text().strip() or self.DEFAULT_SAMPLE_PATH
         if not sample_ref:
             self._status_label.setText("请先选择 wav 样本")
