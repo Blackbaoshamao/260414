@@ -250,7 +250,7 @@ class VoiceTrainService:
             "-c", str(s2_config_path),
         ]
         env = os.environ.copy()
-        env["_CUDA_VISIBLE_DEVICES"] = "0"
+        env["CUDA_VISIBLE_DEVICES"] = "0"
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -328,6 +328,8 @@ class VoiceTrainService:
             cfg = {}
         cfg.setdefault("train", {})
         cfg["train"]["epochs"] = epochs
+        cfg["train"].setdefault("gpu_numbers", "0")
+        cfg["train"].setdefault("batch_size", 12)
         cfg["s2_ckpt_dir"] = str(exp_dir / "logs_s2")
         cfg.setdefault("data", {})
         cfg["data"]["training_files"] = str(exp_dir / "2-name2text.txt")
