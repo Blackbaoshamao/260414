@@ -47,6 +47,8 @@ def _validate_wav_duration(path: str, max_seconds: float = 15.0) -> tuple[bool, 
 class VoiceCloneDialog(QDialog):
     voice_action_requested = pyqtSignal(object)
     voice_settings_changed = pyqtSignal(object)
+    _train_progress_sig = pyqtSignal(str)
+    _train_done_sig = pyqtSignal(object)
     DEFAULT_SAMPLE_PATH = str(app_dir() / "data" / "voice" / "samples" / "anchor.wav")
 
     def __init__(self, parent=None):
@@ -143,6 +145,8 @@ class VoiceCloneDialog(QDialog):
         self._upload_btn.clicked.connect(self._on_upload_clicked)
         self._clone_btn.clicked.connect(self._on_clone_clicked)
         self._train_clone_btn.clicked.connect(self._on_train_clone_clicked)
+        self._train_progress_sig.connect(self._progress_label.setText)
+        self._train_done_sig.connect(self._handle_train_result)
         self._apply_theme_styles()
 
     def _apply_theme_styles(self):
@@ -314,9 +318,9 @@ class VoiceCloneDialog(QDialog):
                 python = resolve_python_exe()
 
                 def on_progress(p: TrainProgress):
-                    QTimer.singleShot(0, lambda: self._progress_label.setText(
+                    self._train_progress_sig.emit(
                         f"[{p.step}] {p.percent}% — {p.message}"
-                    ))
+                    )
 
                 service = VoiceTrainService(root, python, on_progress)
                 import asyncio
@@ -337,7 +341,7 @@ class VoiceCloneDialog(QDialog):
 
         def _thread_wrapper():
             result = _run_training()
-            QTimer.singleShot(0, lambda: self._handle_train_result(result))
+            self._train_done_sig.emit(result)
 
         threading.Thread(target=_thread_wrapper, daemon=True).start()
 
