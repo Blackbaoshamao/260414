@@ -39,7 +39,7 @@ class VoiceTrainService:
     def validate_audio_files(paths: list[str | Path]) -> tuple[bool, str, float]:
         """校验音频文件列表，返回 (ok, message, total_seconds)。"""
         total = 0.0
-        unmeasured = 0
+        non_wav_count = 0
         for p in paths:
             p = Path(p)
             if not p.is_file():
@@ -51,19 +51,18 @@ class VoiceTrainService:
                     with wave.open(str(p), "rb") as wf:
                         total += wf.getnframes() / max(wf.getframerate(), 1)
                 else:
-                    # 用文件大小粗估：mp3~128kbps, flac~700kbps → 取中间 ~400kbps
-                    size_bytes = p.stat().st_size
-                    estimated_sec = size_bytes / (400 * 1024 / 8)
-                    if estimated_sec > 1.0:
-                        total += estimated_sec
-                    else:
-                        unmeasured += 1
+                    non_wav_count += 1
             except Exception as e:
                 return False, f"读取失败 {p.name}: {e}", 0.0
-        if total < 3.0 and unmeasured == 0:
+        if total < 3.0 and non_wav_count == 0:
             return False, "音频总时长不足 3 秒，建议至少 10 秒以上", total
-        if total < 10.0:
-            label = f"音频总时长约 {total:.0f}s" if total > 0 else f"{unmeasured} 个非 WAV 文件"
+        parts = []
+        if total > 0:
+            parts.append(f"WAV 总时长 {total:.1f}s")
+        if non_wav_count > 0:
+            parts.append(f"{non_wav_count} 个音频文件")
+        label = "，".join(parts)
+        if total < 10.0 and non_wav_count == 0:
             return True, f"{label}，建议上传更长的音频以获得更好效果", total
         return True, f"音频总时长约 {total:.0f}s", total
 
