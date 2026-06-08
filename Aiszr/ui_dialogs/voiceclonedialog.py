@@ -1,6 +1,7 @@
 """VoiceCloneDialog — extracted from ui.py."""
 from __future__ import annotations
 import os
+import threading
 import wave
 from app_paths import app_dir
 from ui_constants import DEFAULT_VOICE_SETTINGS
@@ -51,11 +52,12 @@ class VoiceCloneDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("语音克隆")
-        self.resize(560, 440)
+        self.resize(560, 560)
         self.setModal(False)
 
         self._voice_settings_state = VoiceSettings.from_dict(DEFAULT_VOICE_SETTINGS.to_dict())
         self._sample_path = ""
+        self._training = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -65,37 +67,62 @@ class VoiceCloneDialog(QDialog):
         self._title_label.setFont(theme.FONT_TITLE_2)
         layout.addWidget(self._title_label)
 
-        self._subtitle_label = QLabel("选择本地 wav 文件，保存为可用音色", self)
-        layout.addWidget(self._subtitle_label)
+        self._provider_hint = QLabel("", self)
+        self._provider_hint.setWordWrap(True)
+        layout.addWidget(self._provider_hint)
 
+        name_row = QWidget(self)
+        name_layout = QHBoxLayout(name_row)
+        name_layout.setContentsMargins(0, 0, 0, 0)
+        name_layout.addWidget(QLabel("声音名称："))
         self._name_edit = MacLineEdit(placeholder="输入声音名称")
-        self._name_edit.setText("001")
+        self._name_edit.setText("")
         self._name_edit.setFixedHeight(36)
-        layout.addWidget(self._name_edit)
+        name_layout.addWidget(self._name_edit)
+        layout.addWidget(name_row)
 
         upload_row = QWidget(self)
         upload_layout = QHBoxLayout(upload_row)
         upload_layout.setContentsMargins(0, 0, 0, 0)
         upload_layout.setSpacing(theme.SPACING_SM)
-        self._upload_btn = MacButton("选择 wav", variant="secondary", parent=self)
+        self._upload_btn = MacButton("选择音频文件", variant="secondary", parent=self)
         self._upload_btn.setMinimumSize(140, 34)
         upload_layout.addWidget(self._upload_btn)
         upload_layout.addStretch(1)
         layout.addWidget(upload_row)
 
-        self._sample_path_edit = MacLineEdit(placeholder="本地 wav 路径")
-        self._sample_path_edit.setText(self.DEFAULT_SAMPLE_PATH)
+        self._sample_path_edit = MacLineEdit(placeholder="支持 wav/mp3/flac，可多选")
         self._sample_path_edit.setFixedHeight(36)
+        self._sample_path_edit.setReadOnly(True)
         layout.addWidget(self._sample_path_edit)
 
-        self._sample_label = QLabel("未选择样本", self)
+        self._sample_label = QLabel("未选择样本")
         self._sample_label.setWordWrap(True)
         layout.addWidget(self._sample_label)
 
+        self._progress_label = QLabel("", self)
+        self._progress_label.setWordWrap(True)
+        self._progress_label.setStyleSheet(
+            f"color: {theme.CLR_ACCENT}; border: none; font-size: 13px;")
+        layout.addWidget(self._progress_label)
+
         layout.addSpacing(6)
-        self._clone_btn = MacButton("开始克隆", variant="primary", parent=self)
-        self._clone_btn.setMinimumSize(140, 34)
-        layout.addWidget(self._clone_btn)
+
+        btn_row = QWidget(self)
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(10)
+
+        self._clone_btn = MacButton("快速克隆", variant="primary", parent=self)
+        self._clone_btn.setMinimumSize(120, 34)
+        btn_layout.addWidget(self._clone_btn)
+
+        self._train_clone_btn = MacButton("一键训练克隆", variant="primary", parent=self)
+        self._train_clone_btn.setMinimumSize(140, 34)
+        btn_layout.addWidget(self._train_clone_btn)
+
+        btn_layout.addStretch(1)
+        layout.addWidget(btn_row)
 
         self._loading_label = QLabel("", self)
         self._loading_label.setAlignment(Qt.AlignCenter)
@@ -115,6 +142,7 @@ class VoiceCloneDialog(QDialog):
 
         self._upload_btn.clicked.connect(self._on_upload_clicked)
         self._clone_btn.clicked.connect(self._on_clone_clicked)
+        self._train_clone_btn.clicked.connect(self._on_train_clone_clicked)
         self._apply_theme_styles()
 
     def _apply_theme_styles(self):
@@ -122,24 +150,60 @@ class VoiceCloneDialog(QDialog):
         self._title_label.setStyleSheet(
             f"color: {theme.CLR_TEXT_PRI}; border: none; background: transparent;")
         for w in (self._name_edit, self._sample_path_edit,
-                  self._upload_btn, self._clone_btn):
+                  self._upload_btn, self._clone_btn, self._train_clone_btn):
             w.apply_theme_styles()
-        # Loading label stays accent — it's a status indicator
         self._loading_label.setStyleSheet(
             f"color: {theme.CLR_ACCENT}; border: none; font-size: 14px;")
 
+    def _update_provider_ui(self) -> None:
+        provider = self._voice_settings_state.provider
+        is_local = provider == "local_voice"
+        self._train_clone_btn.setVisible(is_local)
+        if is_local:
+            self._provider_hint.setText(
+                "当前使用 GPT-SoVITS 本地语音。\n"
+                "• 快速克隆：使用参考音频直接推理（零样本，无需训练）\n"
+                "• 一键训练克隆：微调训练模型，音色更精准自然"
+            )
+        else:
+            self._provider_hint.setText(
+                "当前使用阿里云百炼。\n上传参考音频后点击快速克隆，将音频上传到云端进行音色克隆。"
+            )
+
     def _on_upload_clicked(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 wav 样本", "", "WAV Files (*.wav)")
-        if not path:
+        provider = self._voice_settings_state.provider
+        if provider == "local_voice":
+            paths, _ = QFileDialog.getOpenFileNames(
+                self, "选择音频文件", "",
+                "Audio Files (*.wav *.mp3 *.flac);;WAV Files (*.wav);;All Files (*)"
+            )
+        else:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "选择 wav 样本", "", "WAV Files (*.wav)"
+            )
+            paths = [path] if path else []
+        if not paths:
             return
-        ok, message = _validate_wav_duration(path, 15.0)
-        if not ok:
+        if provider == "local_voice":
+            from voice_train_service import VoiceTrainService
+            ok, msg, total_sec = VoiceTrainService.validate_audio_files(paths)
+            if not ok:
+                self._status_label.setText(msg)
+                return
+            self._sample_path = ";".join(paths)
+            self._sample_path_edit.setText(self._sample_path)
+            self._sample_label.setText(f"{len(paths)} 个文件，{msg}")
+            self._status_label.setText("")
+        else:
+            path = paths[0]
+            ok, message = _validate_wav_duration(path, 15.0)
+            if not ok:
+                self._status_label.setText(message)
+                return
+            self._sample_path = path
+            self._sample_path_edit.setText(path)
+            self._sample_label.setText(path)
             self._status_label.setText(message)
-            return
-        self._sample_path = path
-        self._sample_path_edit.setText(path)
-        self._sample_label.setText(path)
-        self._status_label.setText(message)
 
     def _tick_loading_dots(self):
         self._loading_dots_count = (self._loading_dots_count + 1) % 4
@@ -162,22 +226,27 @@ class VoiceCloneDialog(QDialog):
         if any(v.name == name for v in self._voice_settings_state.voices):
             self._status_label.setText(f"声音名称「{name}」已存在，请使用其他名称")
             return
-        sample_ref = self._sample_path_edit.text().strip() or self.DEFAULT_SAMPLE_PATH
+        provider = self._voice_settings_state.provider
+        if provider == "local_voice":
+            sample_ref = self._sample_path.split(";")[0] if self._sample_path else ""
+        else:
+            sample_ref = self._sample_path_edit.text().strip() or self.DEFAULT_SAMPLE_PATH
         if not sample_ref:
-            self._status_label.setText("请先选择 wav 样本")
+            self._status_label.setText("请先选择音频文件")
             return
         if not os.path.exists(sample_ref):
             self._status_label.setText(f"样本文件不存在：{sample_ref}")
             return
-        ok, message = _validate_wav_duration(sample_ref, 15.0)
-        if not ok:
-            self._status_label.setText(message)
-            return
+        if provider != "local_voice":
+            ok, message = _validate_wav_duration(sample_ref, 15.0)
+            if not ok:
+                self._status_label.setText(message)
+                return
         from voice_models import VoiceEntry
         entry = VoiceEntry(
             id=VoiceEntry.make_id(),
             name=name,
-            provider=self._voice_settings_state.provider,
+            provider=provider,
             sample_wav_path=sample_ref,
         )
         self._voice_settings_state.voices.append(entry)
@@ -186,7 +255,7 @@ class VoiceCloneDialog(QDialog):
         data["voice"] = self._voice_settings_state.to_dict()
         _save_settings(data)
         self.voice_settings_changed.emit(self._voice_settings_state.to_dict())
-        self._status_label.setText("正在上传并克隆...")
+        self._status_label.setText("正在克隆...")
         self._clone_btn.setEnabled(False)
         self._clone_btn.setText("克隆中...")
         self._start_loading()
@@ -197,9 +266,112 @@ class VoiceCloneDialog(QDialog):
         }
         QTimer.singleShot(120, lambda payload=action: self.voice_action_requested.emit(payload))
 
+    def _on_train_clone_clicked(self):
+        name = self._name_edit.text().strip()
+        if not name:
+            self._status_label.setText("请输入声音名称")
+            return
+        if any(v.name == name for v in self._voice_settings_state.voices):
+            self._status_label.setText(f"声音名称「{name}」已存在，请使用其他名称")
+            return
+        if not self._sample_path:
+            self._status_label.setText("请先选择音频文件")
+            return
+        files = [p.strip() for p in self._sample_path.split(";") if p.strip()]
+        if not files:
+            self._status_label.setText("请先选择音频文件")
+            return
+
+        self._training = True
+        self._clone_btn.setEnabled(False)
+        self._train_clone_btn.setEnabled(False)
+        self._train_clone_btn.setText("训练中...")
+        self._start_loading()
+        self._status_label.setText("准备训练...")
+        self._progress_label.setText("")
+
+        from voice_models import VoiceEntry
+        entry = VoiceEntry(
+            id=VoiceEntry.make_id(),
+            name=name,
+            provider="local_voice",
+            sample_wav_path=files[0],
+            clone_status="training",
+        )
+        self._voice_settings_state.voices.append(entry)
+        self._voice_settings_state.anchor.voice_id = entry.id
+        data = _load_settings()
+        data["voice"] = self._voice_settings_state.to_dict()
+        _save_settings(data)
+        self.voice_settings_changed.emit(self._voice_settings_state.to_dict())
+
+        def _run_training():
+            try:
+                from local_voice_runtime import resolve_gpt_sovits_root, resolve_python_exe
+                from voice_train_service import VoiceTrainService, TrainProgress
+
+                root = resolve_gpt_sovits_root()
+                python = resolve_python_exe()
+
+                def on_progress(p: TrainProgress):
+                    QTimer.singleShot(0, lambda: self._progress_label.setText(
+                        f"[{p.step}] {p.percent}% — {p.message}"
+                    ))
+
+                service = VoiceTrainService(root, python, on_progress)
+                import asyncio
+                loop = asyncio.new_event_loop()
+                try:
+                    results = loop.run_until_complete(
+                        service.run_full_pipeline(
+                            input_files=files,
+                            voice_name=name,
+                            language=self._voice_settings_state.api["local_voice"].text_lang or "zh",
+                        )
+                    )
+                finally:
+                    loop.close()
+                return results, entry.id
+            except Exception as e:
+                return None, str(e)
+
+        def _thread_wrapper():
+            result = _run_training()
+            QTimer.singleShot(0, lambda: self._handle_train_result(result))
+
+        threading.Thread(target=_thread_wrapper, daemon=True).start()
+
+    def _handle_train_result(self, result):
+        results, voice_id_or_error = result
+        self._training = False
+        self._clone_btn.setEnabled(True)
+        self._train_clone_btn.setEnabled(True)
+        self._train_clone_btn.setText("一键训练克隆")
+        self._stop_loading()
+
+        if results is None:
+            self._status_label.setText(f"训练失败：{voice_id_or_error}")
+            return
+
+        voice = self._voice_settings_state.find_voice(voice_id_or_error)
+        if voice:
+            voice.clone_status = "ready"
+            voice.clone_voice_id = results.get("model_dir", "")
+            voice.trained_model_dir = results.get("model_dir", "")
+            voice.last_error = ""
+            data = _load_settings()
+            data["voice"] = self._voice_settings_state.to_dict()
+            _save_settings(data)
+            self.voice_settings_changed.emit(self._voice_settings_state.to_dict())
+        self._status_label.setText(
+            f"训练完成！GPT: {results.get('gpt_ckpt', 'N/A')}\n"
+            f"SoVITS: {results.get('sovits_ckpt', 'N/A')}"
+        )
+
     def load_voice_settings(self, value: object):
         settings = VoiceSettings.from_dict(value)
         self._voice_settings_state = VoiceSettings.from_dict(settings.to_dict())
+        self._update_provider_ui()
 
     def handle_voice_action_result(self, payload: object):
         if not isinstance(payload, dict):
@@ -227,7 +399,7 @@ class VoiceCloneDialog(QDialog):
                 self.voice_settings_changed.emit(self._voice_settings_state.to_dict())
             self._status_label.setText(result.message)
             self._clone_btn.setEnabled(True)
-            self._clone_btn.setText("开始克隆")
+            self._clone_btn.setText("快速克隆")
             self._stop_loading()
 
 

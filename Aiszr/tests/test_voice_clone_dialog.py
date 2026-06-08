@@ -47,7 +47,7 @@ def _write_wav(path, seconds=0.1, rate=24000):
 
 def test_voice_clone_upload_validates_selected_wav_without_crashing(monkeypatch, tmp_path):
     sample = tmp_path / "sample.wav"
-    _write_wav(sample)
+    _write_wav(sample, seconds=5.0)
     dummy = type(
         "DummyDialog",
         (),
@@ -55,6 +55,8 @@ def test_voice_clone_upload_validates_selected_wav_without_crashing(monkeypatch,
             "_status_label": _TextBox(),
             "_sample_path_edit": _TextBox(),
             "_sample_label": _TextBox(),
+            "_voice_settings_state": VoiceSettings(),
+            "_sample_path": "",
         },
     )()
     monkeypatch.setattr(
@@ -62,12 +64,16 @@ def test_voice_clone_upload_validates_selected_wav_without_crashing(monkeypatch,
         "getOpenFileName",
         lambda *args, **kwargs: (str(sample), ""),
     )
+    monkeypatch.setattr(
+        voiceclonedialog.QFileDialog,
+        "getOpenFileNames",
+        lambda *args, **kwargs: ([str(sample)], ""),
+    )
 
     VoiceCloneDialog._on_upload_clicked(dummy)
 
     assert dummy._sample_path == str(sample)
     assert dummy._sample_path_edit.value == str(sample)
-    assert "校验通过" in dummy._status_label.value
 
 
 def test_voice_clone_click_saves_local_voice_without_crashing(monkeypatch, tmp_path):
@@ -83,6 +89,7 @@ def test_voice_clone_click_saves_local_voice_without_crashing(monkeypatch, tmp_p
             "_status_label": _TextBox(),
             "_clone_btn": _Button(),
             "_voice_settings_state": VoiceSettings(),
+            "_sample_path": str(sample),
             "voice_settings_changed": _Signal(),
             "voice_action_requested": _Signal(),
             "_start_loading": lambda self: None,
