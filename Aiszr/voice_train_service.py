@@ -134,7 +134,7 @@ class VoiceTrainService:
             "-i", str(wav_dir),
             "-o", str(output_dir),
             "-l", language,
-            "-s", "large-v3",
+            "-s", "medium",
             "-p", "float16",
         ]
         proc = await asyncio.create_subprocess_exec(
@@ -230,8 +230,8 @@ class VoiceTrainService:
         self,
         exp_dir: str | Path,
         version: str = "v2",
-        gpt_epochs: int = 15,
-        sovits_epochs: int = 8,
+        gpt_epochs: int = 6,
+        sovits_epochs: int = 4,
     ) -> dict[str, str]:
         """运行 SoVITS + GPT 训练，返回 {gpt_ckpt, sovits_ckpt}。"""
         import json as json_mod
@@ -383,8 +383,8 @@ class VoiceTrainService:
         voice_name: str,
         language: str = "zh",
         version: str = "v2",
-        gpt_epochs: int = 15,
-        sovits_epochs: int = 8,
+        gpt_epochs: int = 6,
+        sovits_epochs: int = 4,
         output_base_dir: str | Path | None = None,
     ) -> dict[str, str]:
         """一键完整训练管线。返回 {gpt_ckpt, sovits_ckpt, model_dir}。"""
