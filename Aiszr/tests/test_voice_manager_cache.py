@@ -164,6 +164,7 @@ async def test_synthesize_role_to_file_uses_anchor_clone_without_playback(tmp_pa
             model_id="",
             speed=DEFAULT_SPEED_RATIO,
             volume=DEFAULT_VOLUME_RATIO,
+            trained_model_dir="",
         ):
             calls.append((text, voice_id, output_dir, model_id, speed, volume))
             return VoiceActionResult(True, "ok", output_path=str(keyword_wav))
@@ -251,6 +252,7 @@ async def test_synthesize_role_to_file_allows_local_reference_audio_without_clon
             model_id="",
             speed=DEFAULT_SPEED_RATIO,
             volume=DEFAULT_VOLUME_RATIO,
+            trained_model_dir="",
         ):
             calls.append((text, voice_id, output_dir, model_id, speed, volume))
             return VoiceActionResult(True, "ok", output_path=str(out))
@@ -304,6 +306,7 @@ async def test_synthesize_role_to_file_uses_selected_local_voice_sample(tmp_path
             model_id="",
             speed=DEFAULT_SPEED_RATIO,
             volume=DEFAULT_VOLUME_RATIO,
+            trained_model_dir="",
         ):
             calls.append((text, voice_id, output_dir, model_id, speed, volume))
             return VoiceActionResult(True, "ok", output_path=str(out))
@@ -412,7 +415,7 @@ async def test_synthesize_role_to_file_synthesizes_when_training_clone_becomes_r
                 clone_status="ready",
             )
 
-        async def synthesize(self, text, voice_id, output_dir, *, model_id="", speed=1.0, volume=1.0):
+        async def synthesize(self, text, voice_id, output_dir, *, model_id="", speed=1.0, volume=1.0, trained_model_dir=""):
             synth_calls.append((text, voice_id, output_dir, model_id, speed, volume))
             return VoiceActionResult(True, "ok", output_path=str(out))
 

@@ -777,6 +777,7 @@ class LocalVoiceProvider(VoiceProviderBase):
         *,
         model_id: str = "",
         requested_voice_id: str = "001",
+        trained_model_dir: str = "",
     ) -> VoiceActionResult:
         path = Path(wav_path).expanduser()
         if not path.is_file():
@@ -785,9 +786,10 @@ class LocalVoiceProvider(VoiceProviderBase):
                 f"GPT-SoVITS 参考音频不存在：{wav_path}",
                 clone_status="error",
             )
+        label = "（微调模型）" if trained_model_dir else ""
         return VoiceActionResult(
             True,
-            "GPT-SoVITS 参考音频已就绪",
+            f"GPT-SoVITS 参考音频已就绪{label}",
             clone_voice_id=str(path.resolve()),
             clone_status="ready",
         )
@@ -801,6 +803,7 @@ class LocalVoiceProvider(VoiceProviderBase):
         model_id: str = "",
         speed: float = DEFAULT_SPEED_RATIO,
         volume: float = DEFAULT_VOLUME_RATIO,
+        trained_model_dir: str = "",
     ) -> VoiceActionResult:
         text = str(text or "").strip()
         if not text:
@@ -815,6 +818,21 @@ class LocalVoiceProvider(VoiceProviderBase):
         ready = await ensure_local_voice_runtime(self.credential("endpoint"))
         if not ready.ok:
             return VoiceActionResult(False, ready.message)
+
+        # 切换到微调权重（如果有）
+        if trained_model_dir:
+            from local_voice_runtime import switch_local_voice_weights
+            from voice_train_service import VoiceTrainService
+            model_path = Path(trained_model_dir)
+            gpt_ckpt = VoiceTrainService._find_trained_weights(model_path, "logs_s1", ".ckpt")
+            sovits_ckpt = VoiceTrainService._find_trained_weights(model_path, "logs_s2", ".pth")
+            ok, msg = await switch_local_voice_weights(
+                gpt_ckpt=str(gpt_ckpt) if gpt_ckpt else "",
+                sovits_ckpt=str(sovits_ckpt) if sovits_ckpt else "",
+            )
+            if not ok:
+                from loguru import logger
+                logger.warning("权重切换失败：{}", msg)
 
         missing = self.missing_credentials()
         if missing:
@@ -931,6 +949,7 @@ class VoiceManager:
             voice.sample_wav_path,
             voice_id,
             model_id=self.settings.model_id,
+            trained_model_dir=voice.trained_model_dir,
         )
         if result.ok and result.clone_voice_id:
             if isinstance(provider, AliyunBailianProvider):
@@ -1007,6 +1026,7 @@ class VoiceManager:
                     clone_status="training",
                 )
 
+        trained_dir = voice.trained_model_dir if voice else ""
         result = await provider.synthesize(
             text=text,
             voice_id=synth_voice_id,
@@ -1014,6 +1034,7 @@ class VoiceManager:
             output_dir=VOICE_DATA_DIR / role_name / "generated",
             speed=_role_speed_ratio(role),
             volume=_role_volume_ratio(role),
+            trained_model_dir=trained_dir,
         )
         if not result.ok:
             return result
