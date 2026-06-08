@@ -99,6 +99,7 @@ class VoiceEntry:
     clone_voice_id: str = ""
     clone_status: str = "idle"
     last_error: str = ""
+    trained_model_dir: str = ""
 
     @classmethod
     def from_dict(cls, value: object) -> "VoiceEntry":
@@ -112,6 +113,7 @@ class VoiceEntry:
             clone_voice_id=str(value.get("clone_voice_id", "")).strip(),
             clone_status=str(value.get("clone_status", "idle")).strip() or "idle",
             last_error=str(value.get("last_error", "")).strip(),
+            trained_model_dir=str(value.get("trained_model_dir", "")).strip(),
         )
 
     def to_dict(self) -> dict:
@@ -123,6 +125,7 @@ class VoiceEntry:
             "clone_voice_id": self.clone_voice_id,
             "clone_status": self.clone_status,
             "last_error": self.last_error,
+            "trained_model_dir": self.trained_model_dir,
         }
 
     @staticmethod
