@@ -93,6 +93,7 @@ class VoiceTrainService:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.root),
             )
             stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
@@ -140,6 +141,7 @@ class VoiceTrainService:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(self.root),
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
