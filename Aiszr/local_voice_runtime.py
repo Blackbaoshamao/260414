@@ -178,6 +178,35 @@ class LocalVoiceRuntime:
         except Exception:
             return False
 
+    async def switch_weights(self, gpt_ckpt: str = "", sovits_ckpt: str = "") -> tuple[bool, str]:
+        """热切换 GPT/SoVITS 模型权重。"""
+        if not await self._is_listening():
+            return False, "服务未启动"
+        import httpx
+
+        endpoint = self.endpoint
+        if sovits_ckpt:
+            try:
+                resp = await asyncio.to_thread(
+                    httpx.get, f"{endpoint}/set_sovits_weights",
+                    params={"weights_path": sovits_ckpt}, timeout=10.0,
+                )
+                if resp.status_code != 200:
+                    return False, f"切换 SoVITS 权重失败：{resp.text}"
+            except Exception as e:
+                return False, f"切换 SoVITS 权重异常：{e}"
+        if gpt_ckpt:
+            try:
+                resp = await asyncio.to_thread(
+                    httpx.get, f"{endpoint}/set_gpt_weights",
+                    params={"weights_path": gpt_ckpt}, timeout=10.0,
+                )
+                if resp.status_code != 200:
+                    return False, f"切换 GPT 权重失败：{resp.text}"
+            except Exception as e:
+                return False, f"切换 GPT 权重异常：{e}"
+        return True, "模型权重已切换"
+
     @staticmethod
     async def _drain_stdout(proc: asyncio.subprocess.Process) -> None:
         stream = proc.stdout
@@ -207,3 +236,22 @@ async def stop_local_voice_runtime() -> None:
     if _runtime is not None:
         await _runtime.stop()
         _runtime = None
+
+
+async def switch_local_voice_weights(gpt_ckpt: str = "", sovits_ckpt: str = "") -> tuple[bool, str]:
+    """切换本地语音服务的模型权重。"""
+    global _runtime
+    if _runtime is None:
+        return False, "本地语音服务未初始化"
+    return await _runtime.switch_weights(gpt_ckpt, sovits_ckpt)
+
+
+def resolve_gpt_sovits_root() -> Path:
+    """解析 GPT-SoVITS 根目录。"""
+    return default_gpt_sovits_root()
+
+
+def resolve_python_exe() -> str:
+    """解析 GPT-SoVITS 使用的 Python 可执行文件。"""
+    root = default_gpt_sovits_root()
+    return str(default_gpt_sovits_python(root))
