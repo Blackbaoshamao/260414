@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aiszr - AI 数字人直播平台</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #000;
+            color: #fff;
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* ============ 导航栏 ============ */
+        header {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 5%;
+            backdrop-filter: blur(20px);
+            background: rgba(0, 0, 0, 0.5);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            z-index: 1000;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: #fff;
+        }
+
+        .logo span {
+            background: linear-gradient(135deg, #00d4ff, #0099ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        nav {
+            display: flex;
+            gap: 3rem;
+        }
+
+        nav a {
+            color: #a0a0a0;
+            text-decoration: none;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: color 0.3s ease;
+            position: relative;
+        }
+
+        nav a::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #00d4ff, #0099ff);
+            transition: width 0.3s ease;
+        }
+
+        nav a:hover {
+            color: #fff;
+        }
+
+        nav a:hover::after {
+            width: 100%;
+        }
+
+        /* ============ Hero Section ============ */
+        .hero {
+            margin-top: 70px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            padding: 80px 5%;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.15), transparent);
+            border-radius: 50%;
+            top: -200px;
+            right: -100px;
+            filter: blur(60px);
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(0, 153, 255, 0.1), transparent);
+            border-radius: 50%;
+            bottom: 0;
+            left: -100px;
+            filter: blur(60px);
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            max-width: 800px;
+        }
+
+        .hero-tag {
+            display: inline-block;
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            color: #00d4ff;
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            letter-spacing: 0.5px;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 1.5rem;
+            letter-spacing: -1px;
+            color: #fff;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, #00d4ff, #0099ff, #00d4ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            background-size: 200% 200%;
+            animation: gradient-shift 3s ease infinite;
+        }
+
+        @keyframes gradient-shift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        .hero p {
+            font-size: 1.2rem;
+            color: #a0a0a0;
+            margin-bottom: 2.5rem;
+            line-height: 1.8;
+            max-width: 500px;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 0.9rem 2.2rem;
+            border: none;
+            border-radius: 50px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            letter-spacing: 0.3px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #00d4ff, #0099ff);
+            color: #000;
+            box-shadow: 0 8px 30px rgba(0, 212, 255, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0, 212, 255, 0.5);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: translateY(-2px);
+        }
+
+        /* ============ Icon Styles ============ */
+        .icon-wrapper {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(0, 153, 255, 0.05));
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 16px;
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+            color: #00d4ff;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover .icon-wrapper {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(0, 153, 255, 0.1));
+            border-color: rgba(0, 212, 255, 0.4);
+            transform: translateY(-4px);
+        }
+
+        .use-case-icon-wrapper {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 70px;
+            height: 70px;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(0, 153, 255, 0.05));
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 18px;
+            margin-bottom: 1.5rem;
+            font-size: 2rem;
+            color: #00d4ff;
+            transition: all 0.3s ease;
+        }
+
+        .use-case-card:hover .use-case-icon-wrapper {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(0, 153, 255, 0.1));
+            border-color: rgba(0, 212, 255, 0.4);
+            transform: translateY(-6px);
+        }
+
+        /* ============ Features Section ============ */
+        .features {
+            padding: 6rem 5%;
+            position: relative;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 212, 255, 0.02));
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 5rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .section-tag {
+            display: inline-block;
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            color: #00d4ff;
+            padding: 0.4rem 0.8rem;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .section-title {
+            font-size: 2.8rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            letter-spacing: -0.5px;
+            color: #fff;
+        }
+
+        .section-desc {
+            font-size: 1.1rem;
+            color: #a0a0a0;
+            line-height: 1.8;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .feature-card {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.05), rgba(0, 153, 255, 0.05));
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 20px;
+            padding: 2.5rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 200px;
+            height: 200px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.1), transparent);
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .feature-card:hover {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(0, 153, 255, 0.08));
+            border-color: rgba(0, 212, 255, 0.3);
+            transform: translateY(-8px);
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
+        }
+
+        .feature-card h3 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 0.8rem;
+            color: #fff;
+            letter-spacing: -0.3px;
+        }
+
+        .feature-card p {
+            color: #a0a0a0;
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        /* ============ Stats Section ============ */
+        .stats {
+            padding: 6rem 5%;
+            background: linear-gradient(180deg, rgba(0, 212, 255, 0.02), rgba(0, 0, 0, 0));
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 2.5rem;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .stat-box {
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .stat-number {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #00d4ff, #0099ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+            letter-spacing: -1px;
+        }
+
+        .stat-label {
+            color: #a0a0a0;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        /* ============ Workflow Section ============ */
+        .workflow {
+            padding: 6rem 5%;
+            position: relative;
+        }
+
+        .workflow-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .workflow-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .workflow-left {
+            position: relative;
+        }
+
+        .workflow-left h3 {
+            font-size: 0.85rem;
+            color: #00d4ff;
+            font-weight: 700;
+            letter-spacing: 1px;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+        }
+
+        .workflow-left h2 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            line-height: 1.2;
+            letter-spacing: -0.5px;
+        }
+
+        .workflow-left p {
+            color: #a0a0a0;
+            font-size: 1.05rem;
+            line-height: 1.8;
+            margin-bottom: 2rem;
+        }
+
+        .workflow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .workflow-step {
+            display: flex;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            background: rgba(0, 212, 255, 0.05);
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .workflow-step:hover {
+            background: rgba(0, 212, 255, 0.08);
+            border-color: rgba(0, 212, 255, 0.3);
+            transform: translateX(10px);
+        }
+
+        .step-number {
+            min-width: 40px;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #00d4ff, #0099ff);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: #000;
+            flex-shrink: 0;
+            font-size: 0.9rem;
+        }
+
+        .step-content h4 {
+            font-weight: 700;
+            margin-bottom: 0.3rem;
+            color: #fff;
+        }
+
+        .step-content p {
+            font-size: 0.9rem;
+            color: #a0a0a0;
+        }
+
+        .workflow-visual {
+            position: relative;
+            height: 400px;
+            background: rgba(0, 212, 255, 0.05);
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 20px;
+            padding: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .visual-item {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(0, 153, 255, 0.05));
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            width: 100%;
+            padding: 1.5rem;
+            border-radius: 12px;
+            text-align: center;
+            font-weight: 600;
+            color: #a0a0a0;
+        }
+
+        .visual-arrow {
+            font-size: 1.5rem;
+            color: #00d4ff;
+        }
+
+        /* ============ Use Cases Section ============ */
+        .use-cases {
+            padding: 6rem 5%;
+            background: linear-gradient(180deg, rgba(0, 212, 255, 0.02), rgba(0, 0, 0, 0));
+        }
+
+        .use-case-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            margin-top: 3rem;
+        }
+
+        .use-case-card {
+            background: linear-gradient(135deg, rgba(0, 153, 255, 0.08), rgba(0, 212, 255, 0.05));
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 20px;
+            padding: 2.5rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.4s ease;
+        }
+
+        .use-case-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.15), transparent);
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .use-case-card:hover {
+            background: linear-gradient(135deg, rgba(0, 153, 255, 0.12), rgba(0, 212, 255, 0.08));
+            border-color: rgba(0, 212, 255, 0.3);
+            transform: translateY(-8px);
+        }
+
+        .use-case-card:hover::before {
+            opacity: 1;
+        }
+
+        .use-case-card h3 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: #fff;
+        }
+
+        .use-case-card p {
+            color: #a0a0a0;
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        /* ============ CTA Section ============ */
+        .cta-section {
+            padding: 8rem 5%;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta-section::before {
+            content: '';
+            position: absolute;
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.1), transparent);
+            border-radius: 50%;
+            top: -200px;
+            right: -200px;
+            filter: blur(80px);
+        }
+
+        .cta-section::after {
+            content: '';
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(0, 153, 255, 0.08), transparent);
+            border-radius: 50%;
+            bottom: -100px;
+            left: -200px;
+            filter: blur(80px);
+        }
+
+        .cta-content {
+            position: relative;
+            z-index: 10;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .cta-section h2 {
+            font-size: 3rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            letter-spacing: -0.5px;
+        }
+
+        .cta-section p {
+            font-size: 1.2rem;
+            color: #a0a0a0;
+            margin-bottom: 3rem;
+            line-height: 1.8;
+        }
+
+        /* ============ Footer ============ */
+        footer {
+            padding: 3rem 5%;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            text-align: center;
+            color: #707070;
+            font-size: 0.9rem;
+        }
+
+        /* ============ Responsive ============ */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.2rem;
+            }
+
+            .section-title {
+                font-size: 1.8rem;
+            }
+
+            .workflow-content {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+
+            nav {
+                gap: 1.5rem;
+                font-size: 0.85rem;
+            }
+
+            .hero-buttons {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <header>
+        <div class="logo">Aiszr<span>.</span></div>
+        <nav>
+            <a href="#features">功能</a>
+            <a href="#workflow">工作流</a>
+            <a href="#use-cases">场景</a>
+            <a href="#contact">联系</a>
+        </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-tag">✨ AI 直播新时代</div>
+            <h1>数字人<span>实时互动</span>，直播<span>带货</span>新高度</h1>
+            <p>智能回复 + 数字人合成 + OBS 联动 + RTMP 推流。一个平台搞定直播间的所有自动化需求。</p>
+            <div class="hero-buttons">
+                <button class="btn btn-primary">立即开始</button>
+                <button class="btn btn-secondary">查看演示</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="section-header">
+            <div class="section-tag">核心能力</div>
+            <h2 class="section-title">强大的功能组合</h2>
+            <p class="section-desc">从弹幕抓取到直播推流，完整的直播自动化解决方案</p>
+        </div>
+
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-brain"></i>
+                </div>
+                <h3>AI 智能回复</h3>
+                <p>接入 DeepSeek 大模型，实时分析弹幕，生成自然流畅的互动回复。支持话术库、冷却节流、用户分级。</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-video"></i>
+                </div>
+                <h3>数字人合成</h3>
+                <p>AI 语音合成 + 绿幕视频，一体化生成数字人视频。支持口型同步、表情管理、多风格切换。</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-comments"></i>
+                </div>
+                <h3>弹幕实时抓取</h3>
+                <p>基于 Playwright 的稳定方案，<90ms 延迟捕获弹幕、礼物、关注等数据。支持多平台、多房间。</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-link"></i>
+                </div>
+                <h3>OBS 关键词联动</h3>
+                <p>自动检测关键词触发 OBS 动作。支持场景切换、音乐播放、特效触发、弹幕互动墙。</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-broadcast-tower"></i>
+                </div>
+                <h3>HLS 推流</h3>
+                <p>FFmpeg + RTMP 高效推流，无缝集成 OBS。支持视频号、抖音、快手等主流平台直播。</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-server"></i>
+                </div>
+                <h3>本地部署</h3>
+                <p>完全本地运行，无云依赖。Python 3.10+ 开箱即用，隐私安全完全可控，支持私有化部署。</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section class="stats">
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-number">90%+</div>
+                <div class="stat-label">弹幕捕获精度</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number">&lt;90ms</div>
+                <div class="stat-label">端到端延迟</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number">24/7</div>
+                <div class="stat-label">稳定运行</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number">∞</div>
+                <div class="stat-label">无限扩展</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Workflow Section -->
+    <section class="workflow" id="workflow">
+        <div class="workflow-container">
+            <div class="section-header" style="margin-bottom: 4rem;">
+                <div class="section-tag">完整流程</div>
+                <h2 class="section-title">智能工作流</h2>
+            </div>
+
+            <div class="workflow-content">
+                <div class="workflow-left">
+                    <h3>完整的自动化链路</h3>
+                    <h2>8 步自动化</h2>
+                    <p>从直播间登录到数据观测，每一步都是自动化的、智能的、可靠的。</p>
+
+                    <div class="workflow-steps">
+                        <div class="workflow-step">
+                            <div class="step-number">1</div>
+                            <div class="step-content">
+                                <h4>登录直播间</h4>
+                                <p>Playwright 自动化，支持多平台</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step">
+                            <div class="step-number">2</div>
+                            <div class="step-content">
+                                <h4>实时抓弹幕</h4>
+                                <p>WebSocket 拦截，<90ms 延迟</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step">
+                            <div class="step-number">3</div>
+                            <div class="step-content">
+                                <h4>AI 智能分析</h4>
+                                <p>DeepSeek 大模型，自然语言理解</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step">
+                            <div class="step-number">4</div>
+                            <div class="step-content">
+                                <h4>语音合成</h4>
+                                <p>高保真 TTS，多种音色</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="workflow-visual">
+                    <div class="visual-item"><i class="fas fa-user-tie"></i> 直播间登录</div>
+                    <div class="visual-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="visual-item"><i class="fas fa-comments"></i> 实时抓弹幕</div>
+                    <div class="visual-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="visual-item"><i class="fas fa-microchip"></i> AI 智能分析</div>
+                    <div class="visual-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="visual-item"><i class="fas fa-volume-up"></i> RTMP 推流</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Use Cases Section -->
+    <section class="use-cases" id="use-cases">
+        <div class="section-header">
+            <div class="section-tag">应用场景</div>
+            <h2 class="section-title">适配多种直播场景</h2>
+        </div>
+
+        <div class="use-case-grid">
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-shopping-cart"></i>
+                </div>
+                <h3>直播带货</h3>
+                <p>数字人实时互动，关键词自动触发优惠，精准回应用户提问，提升转化率。</p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-gamepad"></i>
+                </div>
+                <h3>游戏直播</h3>
+                <p>AI 助播实时互动，自动跟评高价值用户，关键词触发游戏内事件。</p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-book"></i>
+                </div>
+                <h3>教育直播</h3>
+                <p>数字讲师自动答疑，关键词触发知识点回放，实时生成互动练习。</p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-microphone"></i>
+                </div>
+                <h3>娱乐直播</h3>
+                <p>虚拟主播实时互动，自动生成笑点回应，OBS 联动特效和音乐。</p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-presentation"></i>
+                </div>
+                <h3>企业发布会</h3>
+                <p>数字化主持人，实时播报提问，多平台同步直播，增强品牌影响。</p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-star"></i>
+                </div>
+                <h3>粉丝运营</h3>
+                <p>自动识别重要粉丝，精准互动，数据沉淀用户画像，构建粘性。</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section" id="contact">
+        <div class="cta-content">
+            <h2>准备好开启直播新时代？</h2>
+            <p>加入数百位直播主和电商达人的阵营，用 AI 力量提升直播间 ROI</p>
+            <div style="margin-top: 2.5rem;">
+                <button class="btn btn-primary">立即开始使用</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <p>&copy; 2026 Aiszr. All rights reserved. | 由 AI 驱动的直播互动未来</p>
+    </footer>
+
+    <!-- GSAP -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+
+    <script>
+        gsap.registerPlugin(ScrollTrigger);
+
+        // Hero 入场
+        const tl = gsap.timeline();
+        tl.from(".hero-tag", { opacity: 0, y: 20, duration: 0.6 }, 0)
+          .from(".hero h1", { opacity: 0, y: 40, duration: 0.8 }, 0.1)
+          .from(".hero p", { opacity: 0, y: 30, duration: 0.6 }, 0.2)
+          .from(".btn", { opacity: 0, y: 20, stagger: 0.1, duration: 0.5 }, 0.35);
+
+        // Section 标题
+        gsap.utils.toArray(".section-header").forEach((header) => {
+            gsap.from(header, {
+                opacity: 0,
+                y: 50,
+                duration: 0.8,
+                ease: "power3.out",
+                scrollTrigger: {
+                    trigger: header,
+                    start: "top 80%"
+                }
+            });
+        });
+
+        // 功能卡片
+        gsap.utils.toArray(".feature-card").forEach((card, i) => {
+            gsap.from(card, {
+                opacity: 0,
+                y: 50,
+                duration: 0.7,
+                delay: i * 0.08,
+                ease: "power3.out",
+                scrollTrigger: {
+                    trigger: card,
+                    start: "top 85%"
+                }
+            });
+        });
+
+        // 统计数字
+        gsap.utils.toArray(".stat-number").forEach((stat) => {
+            const text = stat.textContent.trim();
+            if (text.includes("%")) {
+                gsap.from({ val: 0 }, {
+                    val: 90,
+                    duration: 2.5,
+                    ease: "power1.out",
+                    onUpdate: function() {
+                        stat.textContent = Math.floor(this.targets()[0].val) + "%+";
+                    },
+                    scrollTrigger: { trigger: stat, start: "top 90%", once: true }
+                });
+            }
+        });
+
+        // 工作流步骤
+        gsap.utils.toArray(".workflow-step").forEach((step, i) => {
+            gsap.from(step, {
+                opacity: 0,
+                x: -30,
+                duration: 0.6,
+                delay: i * 0.1,
+                ease: "power3.out",
+                scrollTrigger: {
+                    trigger: step,
+                    start: "top 85%"
+                }
+            });
+        });
+
+        // 应用场景卡片
+        gsap.utils.toArray(".use-case-card").forEach((card, i) => {
+            gsap.from(card, {
+                opacity: 0,
+                scale: 0.8,
+                y: 40,
+                duration: 0.7,
+                delay: i * 0.08,
+                ease: "back.out(1.5)",
+                scrollTrigger: {
+                    trigger: card,
+                    start: "top 85%"
+                }
+            });
+        });
+
+        // CTA 动画
+        gsap.from(".cta-content h2, .cta-content p", {
+            opacity: 0,
+            y: 40,
+            stagger: 0.2,
+            duration: 0.8,
+            ease: "power3.out",
+            scrollTrigger: {
+                trigger: ".cta-section",
+                start: "top 75%"
+            }
+        });
+
+        // 平滑滚动
+        document.querySelectorAll('a[href^="#"]').forEach(a => {
+            a.addEventListener('click', (e) => {
+                e.preventDefault();
+                const target = document.querySelector(a.getAttribute('href'));
+                if (target) {
+                    gsap.to(window, {
+                        scrollTo: target,
+                        duration: 1,
+                        ease: "power3.inOut"
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
