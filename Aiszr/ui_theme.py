@@ -19,16 +19,20 @@ class _iOSToggle(QAbstractButton):
     _OFF_COLOR_DARK = "#39393D"
     _THUMB_COLOR = "#FFFFFF"
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, width: int = 48, height: int = 28):
         super().__init__(parent)
         self.setCheckable(True)
-        self.setFixedSize(48, 28)
-        self._thumb_x = 3.0
+        self._toggle_w = max(28, int(width))
+        self._toggle_h = max(18, int(height))
+        self._pad = max(2, round(self._toggle_h * 0.11))
+        self._thumb_r = max(7, (self._toggle_h - self._pad * 2) // 2)
+        self.setFixedSize(self._toggle_w, self._toggle_h)
+        self._thumb_x = float(self._off_thumb_x())
         self._thumb_anim = QPropertyAnimation(self, b"_anim_thumb_x")
         self._thumb_anim.setDuration(250)
         self._thumb_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self.toggled.connect(self._animate)
-        self._update_thumb_pos(0)
+        self._update_thumb_pos(self._off_thumb_x())
 
     def get_anim_thumb_x(self):
         return self._thumb_x
@@ -41,7 +45,7 @@ class _iOSToggle(QAbstractButton):
 
     def _animate(self, checked):
         self._thumb_anim.setStartValue(self._thumb_x)
-        self._thumb_anim.setEndValue(25.0 if checked else 3.0)
+        self._thumb_anim.setEndValue(float(self._on_thumb_x() if checked else self._off_thumb_x()))
         self._thumb_anim.start()
 
     def _update_thumb_pos(self, pos):
@@ -50,8 +54,14 @@ class _iOSToggle(QAbstractButton):
 
     def setChecked(self, checked):
         super().setChecked(checked)
-        self._thumb_x = 25.0 if checked else 3.0
+        self._thumb_x = float(self._on_thumb_x() if checked else self._off_thumb_x())
         self.update()
+
+    def _off_thumb_x(self) -> int:
+        return self._pad
+
+    def _on_thumb_x(self) -> int:
+        return self._toggle_w - self._pad - (self._thumb_r * 2)
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -61,11 +71,18 @@ class _iOSToggle(QAbstractButton):
         bg = QColor(self._ON_COLOR if is_on else self._OFF_COLOR_DARK)
         p.setBrush(QBrush(bg))
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(0, 0, 48, 28, 14, 14)
+        p.drawRoundedRect(
+            0,
+            0,
+            self._toggle_w,
+            self._toggle_h,
+            self._toggle_h // 2,
+            self._toggle_h // 2,
+        )
 
-        thumb_r = 11
+        thumb_r = self._thumb_r
         cx = self._thumb_x + thumb_r
-        cy = 14
+        cy = self._toggle_h / 2
         p.setBrush(QBrush(QColor(self._THUMB_COLOR)))
         thumb_shadow = QColor(0, 0, 0, 30)
         p.setPen(Qt.PenStyle.NoPen)
@@ -702,4 +719,3 @@ def register_app_fonts() -> int:
         if os.path.isfile(path) and QFontDatabase.addApplicationFont(path) >= 0:
             loaded += 1
     return loaded
-

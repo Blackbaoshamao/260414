@@ -192,6 +192,71 @@ async def test_synthesize_role_to_file_uses_anchor_clone_without_playback(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_synthesize_role_to_file_can_override_provider_for_keyword_voice(
+    tmp_path, monkeypatch
+):
+    settings = VoiceSettings.from_dict(
+        {
+            "provider": "local_voice",
+            "model_id": "gpt-sovits-v2",
+            "voices": [
+                {
+                    "id": "aliyun-anchor",
+                    "name": "anchor",
+                    "provider": "aliyun_bailian",
+                    "clone_voice_id": "aliyun-clone",
+                    "clone_status": "ready",
+                }
+            ],
+            "anchor": {"voice_id": "aliyun-anchor"},
+        }
+    )
+    manager = VoiceManager(settings)
+    keyword_wav = tmp_path / "keyword.wav"
+    calls = []
+
+    class FakeProvider:
+        def __init__(self, active_settings):
+            self.active_settings = active_settings
+
+        async def synthesize(
+            self,
+            text,
+            voice_id,
+            output_dir,
+            *,
+            model_id="",
+            speed=DEFAULT_SPEED_RATIO,
+            volume=DEFAULT_VOLUME_RATIO,
+            trained_model_dir="",
+        ):
+            calls.append(
+                (self.active_settings.provider, text, voice_id, model_id, output_dir)
+            )
+            return VoiceActionResult(True, "ok", output_path=str(keyword_wav))
+
+    monkeypatch.setattr(
+        VoiceManager,
+        "provider",
+        lambda self: FakeProvider(self.settings),
+    )
+
+    result = await manager.synthesize_role_to_file(
+        "keyword",
+        "anchor",
+        provider_name="aliyun_bailian",
+    )
+
+    assert result.ok is True
+    assert manager.settings.provider == "local_voice"
+    assert calls[0][0] == "aliyun_bailian"
+    assert calls[0][1] == "keyword"
+    assert calls[0][2] == "aliyun-clone"
+    assert calls[0][3] == QWEN_TTS_VC_MODEL
+    assert calls[0][4].name == "generated"
+
+
+@pytest.mark.asyncio
 async def test_synthesize_and_play_restarts_after_previous_stop(tmp_path, monkeypatch):
     manager = VoiceManager(VoiceSettings())
     output_path = tmp_path / "preview.wav"

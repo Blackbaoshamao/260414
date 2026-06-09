@@ -25,6 +25,7 @@ from local_voice_runtime import (
 )
 from voice_models import (
     VOICE_MODELS,
+    VOICE_PROVIDERS,
     VoiceEntry,
     VoiceProviderApiConfig,
     VoiceRoleConfig,
@@ -36,9 +37,25 @@ from app_paths import app_dir
 APP_DIR = app_dir()
 VOICE_DATA_DIR = APP_DIR / "data" / "voice"
 
-DEFAULT_SPEED_RATIO = 1.2
+DEFAULT_SPEED_RATIO = 1.0
 DEFAULT_VOLUME_RATIO = 1.2
+# Generate the full text in one GPT-SoVITS request; slice the returned WAV downstream.
 LOCAL_VOICE_TEXT_SPLIT_METHOD = "cut0"
+LOCAL_VOICE_TOP_K = 10
+LOCAL_VOICE_TOP_P = 0.85
+LOCAL_VOICE_TEMPERATURE = 0.7
+LOCAL_VOICE_REPETITION_PENALTY = 1.2
+LOCAL_VOICE_SEED = 1234
+LOCAL_VOICE_PARALLEL_INFER = False
+LOCAL_VOICE_PRETRAINED_GPT_RELATIVE_PATHS = {
+    "v1": Path("GPT_SoVITS") / "pretrained_models" / "s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt",
+    "v2": Path("GPT_SoVITS") / "pretrained_models" / "gsv-v2final-pretrained" / "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt",
+    "v2Pro": Path("GPT_SoVITS") / "pretrained_models" / "s1v3.ckpt",
+    "v2ProPlus": Path("GPT_SoVITS") / "pretrained_models" / "s1v3.ckpt",
+    "v3": Path("GPT_SoVITS") / "pretrained_models" / "s1v3.ckpt",
+    "v4": Path("GPT_SoVITS") / "pretrained_models" / "s1v3.ckpt",
+}
+LOCAL_VOICE_USE_FINE_TUNED_GPT_ENV = "GPT_SOVITS_USE_FINE_TUNED_GPT"
 QWEN_VOICE_ENROLLMENT_MODEL = "qwen-voice-enrollment"
 QWEN_TTS_VC_MODEL = "qwen3-tts-vc-2026-01-22"
 QWEN_TTS_VC_MODELS = {QWEN_TTS_VC_MODEL}
@@ -121,6 +138,47 @@ def _cached_synthesis_path(
 
 # Public alias for cross-module use when locating cached WAVs.
 cached_synthesis_path = _cached_synthesis_path
+
+
+def _pick_ref_audio(sliced_dir: Path) -> str:
+    """从切片目录中选一个时长在 3~10 秒的 wav 文件作为参考音频。"""
+    import wave
+    wavs = sorted(sliced_dir.glob("*.wav"), key=lambda p: p.stat().st_size, reverse=True)
+    for wav in wavs:
+        try:
+            with wave.open(str(wav), "r") as wf:
+                duration = wf.getnframes() / wf.getframerate()
+            if 3 <= duration <= 10:
+                return str(wav)
+        except Exception:
+            continue
+    # 没有在范围内的，取文件大小排在中间的
+    if wavs:
+        return str(wavs[len(wavs) // 2])
+    return ""
+
+
+def _truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _default_local_voice_gpt_ckpt(version: str = "v2") -> Path:
+    from local_voice_runtime import resolve_gpt_sovits_root
+
+    relative = LOCAL_VOICE_PRETRAINED_GPT_RELATIVE_PATHS.get(version, LOCAL_VOICE_PRETRAINED_GPT_RELATIVE_PATHS["v2"])
+    return resolve_gpt_sovits_root() / relative
+
+
+def _local_voice_model_version(model_path: Path) -> str:
+    config_path = model_path / "tmp_s2.json"
+    if not config_path.is_file():
+        return "v2"
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return "v2"
+    version = str(data.get("version") or data.get("model", {}).get("version") or "v2").strip()
+    return version or "v2"
 
 
 def _local_voice_cache_key(config: VoiceProviderApiConfig, ref_audio_path: str) -> str:
@@ -526,7 +584,7 @@ class AliyunBailianProvider(VoiceProviderBase):
                     "Content-Type": "application/json",
                 },
                 json=body,
-                timeout=120.0,
+                timeout=300.0,
             )
             data = _extract_response_json(resp)
             if resp.status_code != 200:
@@ -810,6 +868,51 @@ class LocalVoiceProvider(VoiceProviderBase):
             return VoiceActionResult(False, "合成文本为空")
 
         ref_audio_path = str(voice_id or self.config.reference_audio).strip()
+        prompt_text = str(self.config.prompt_text or "").strip()
+        prompt_lang = str(self.config.prompt_lang or "zh").strip() or "zh"
+
+        # 如果 trained_model_dir 为空但 ref_audio_path 指向 trained_models/ 下的文件，自动推断模型目录
+        if not trained_model_dir and ref_audio_path:
+            p = Path(ref_audio_path)
+            # 尝试匹配 .../trained_models/<voice_name>/sliced/xxx.wav 或 .../trained_models/<voice_name>/xxx
+            parts = p.parts
+            for i, part in enumerate(parts):
+                if part == "trained_models" and i + 1 < len(parts):
+                    model_path_candidate = Path(*parts[:i + 2])
+                    if (model_path_candidate / "sliced").is_dir() or (model_path_candidate / "logs_s2").is_dir():
+                        trained_model_dir = str(model_path_candidate)
+                        break
+
+        # 当有训练模型目录时，自动修复参考音频和 prompt_text
+        if trained_model_dir:
+            import wave as _wave
+            from voice_train_service import VoiceTrainService
+            model_path = Path(trained_model_dir)
+            # 如果 ref_audio_path 不是有效文件或时长不在 3~10 秒，从训练切片中重新选择
+            need_new_ref = True
+            if ref_audio_path and Path(ref_audio_path).expanduser().is_file():
+                try:
+                    with _wave.open(str(Path(ref_audio_path).expanduser()), "r") as wf:
+                        dur = wf.getnframes() / wf.getframerate()
+                    if 3 <= dur <= 10:
+                        need_new_ref = False
+                except Exception:
+                    pass
+            if need_new_ref:
+                sliced_dir = model_path / "sliced"
+                if sliced_dir.is_dir():
+                    picked = _pick_ref_audio(sliced_dir)
+                    if picked:
+                        ref_audio_path = picked
+            # 如果 prompt_text 为空，从 ASR 标注中查找
+            if not prompt_text:
+                asr_lists = list((model_path / "asr_output").glob("*.list"))
+                if asr_lists and ref_audio_path:
+                    wav_name = Path(ref_audio_path).name
+                    t, lang = VoiceTrainService._read_asr_text(asr_lists[0], wav_name)
+                    if t:
+                        prompt_text = t
+                        prompt_lang = lang or prompt_lang
         if not ref_audio_path:
             return VoiceActionResult(False, "GPT-SoVITS 缺少参考音频，请先完成主播音色克隆或填写参考音频路径")
         if not Path(ref_audio_path).expanduser().is_file():
@@ -819,13 +922,25 @@ class LocalVoiceProvider(VoiceProviderBase):
         if not ready.ok:
             return VoiceActionResult(False, ready.message)
 
-        # 切换到微调权重（如果有）
+        # Tiny GPT fine-tunes can collapse to immediate EOS. Keep the text-to-semantic
+        # model on the stable pretrained v2 checkpoint unless explicitly requested.
         if trained_model_dir:
             from local_voice_runtime import switch_local_voice_weights
-            from voice_train_service import VoiceTrainService
-            model_path = Path(trained_model_dir)
-            gpt_ckpt = VoiceTrainService._find_trained_weights(model_path, "logs_s1", ".ckpt")
-            sovits_ckpt = VoiceTrainService._find_trained_weights(model_path, "logs_s2", ".pth")
+            sovits_ckpt = VoiceTrainService._find_savee_weights(model_path, "s2") or VoiceTrainService._find_trained_weights(model_path, "logs_s2", ".pth", prefix="G_")
+            # 确保 checkpoint 格式正确（旧训练的文件可能缺少 config/weight 键）
+            s2_config_path = model_path / "tmp_s2.json"
+            if sovits_ckpt and s2_config_path.is_file():
+                VoiceTrainService._inject_sovits_config(sovits_ckpt, json.loads(s2_config_path.read_text(encoding="utf-8")))
+            if _truthy_env(LOCAL_VOICE_USE_FINE_TUNED_GPT_ENV):
+                gpt_ckpt = VoiceTrainService._find_savee_weights(model_path, "s1") or VoiceTrainService._find_trained_weights(model_path, "logs_s1", ".ckpt")
+                s1_config_path = model_path / "tmp_s1.yaml"
+                if gpt_ckpt and not VoiceTrainService._find_savee_weights(model_path, "s1"):
+                    if s1_config_path.is_file():
+                        import yaml as _yaml
+                        VoiceTrainService._inject_gpt_config(gpt_ckpt, _yaml.safe_load(s1_config_path.read_text(encoding="utf-8")))
+            else:
+                pretrained_gpt = _default_local_voice_gpt_ckpt(_local_voice_model_version(model_path))
+                gpt_ckpt = pretrained_gpt if pretrained_gpt.is_file() else None
             ok, msg = await switch_local_voice_weights(
                 gpt_ckpt=str(gpt_ckpt) if gpt_ckpt else "",
                 sovits_ckpt=str(sovits_ckpt) if sovits_ckpt else "",
@@ -857,24 +972,39 @@ class LocalVoiceProvider(VoiceProviderBase):
             return VoiceActionResult(True, "使用缓存试听音频", output_path=str(output_path))
 
         endpoint = self._tts_url(self.credential("endpoint"))
+        # GPT-SoVITS 不支持中文路径，复制到临时英文路径
+        import re, shutil as _shutil
+        safe_ref = ref_audio_path
+        if re.search(r'[^\x00-\x7F]', ref_audio_path):
+            tmp_dir = Path(tempfile.gettempdir()) / "gpt_sovits_ref"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_ref = tmp_dir / "ref_audio.wav"
+            _shutil.copy2(ref_audio_path, str(tmp_ref))
+            safe_ref = str(tmp_ref)
         payload = {
             "text": text,
             "text_lang": self.config.text_lang or "zh",
-            "ref_audio_path": ref_audio_path,
-            "prompt_text": self.config.prompt_text,
-            "prompt_lang": self.config.prompt_lang or "zh",
+            "ref_audio_path": safe_ref,
+            "prompt_text": prompt_text,
+            "prompt_lang": prompt_lang,
             "text_split_method": LOCAL_VOICE_TEXT_SPLIT_METHOD,
             "batch_size": 1,
             "media_type": "wav",
             "streaming_mode": False,
             "speed_factor": speed_factor,
+            "top_k": LOCAL_VOICE_TOP_K,
+            "top_p": LOCAL_VOICE_TOP_P,
+            "temperature": LOCAL_VOICE_TEMPERATURE,
+            "parallel_infer": LOCAL_VOICE_PARALLEL_INFER,
+            "repetition_penalty": LOCAL_VOICE_REPETITION_PENALTY,
+            "seed": LOCAL_VOICE_SEED,
         }
 
         def _http_synth() -> tuple[bool, object]:
             try:
                 import httpx
 
-                resp = httpx.post(endpoint, json=payload, timeout=120.0)
+                resp = httpx.post(endpoint, json=payload, timeout=300.0)
                 content_type = resp.headers.get("content-type", "")
                 content = getattr(resp, "content", b"") or b""
                 if resp.status_code == 200 and content and _looks_like_audio_response(content, content_type):
@@ -882,6 +1012,9 @@ class LocalVoiceProvider(VoiceProviderBase):
                     return True, str(actual_path)
                 data = _extract_response_json(resp)
                 detail = data.get("message") or data.get("detail") or data.get("code") or data
+                exc = data.get("Exception") or data.get("exception") or ""
+                if exc:
+                    detail = f"{detail} | {exc}"
                 return False, f"HTTP {resp.status_code}: {detail}"
             except Exception as exc:
                 return False, exc
@@ -890,7 +1023,7 @@ class LocalVoiceProvider(VoiceProviderBase):
         actual_path = Path(str(detail)) if ok and detail else output_path
         if ok and _is_valid_audio_cache(actual_path):
             return VoiceActionResult(True, "GPT-SoVITS 语音已生成", output_path=str(actual_path))
-        return VoiceActionResult(False, f"GPT-SoVITS 请求失败：{_short_detail(detail)}")
+        return VoiceActionResult(False, f"GPT-SoVITS 请求失败：{_short_detail(detail)} [ref={safe_ref}]")
 
     @staticmethod
     def _tts_url(endpoint: str) -> str:
@@ -963,9 +1096,24 @@ class VoiceManager:
             voice.last_error = result.message
         return result
 
-    async def synthesize_role_to_file(self, text: str, role_name: str) -> VoiceActionResult:
+    async def synthesize_role_to_file(
+        self,
+        text: str,
+        role_name: str,
+        *,
+        provider_name: str = "",
+    ) -> VoiceActionResult:
         if not text.strip():
             return VoiceActionResult(False, "试听文本为空")
+        provider_name = str(provider_name or "").strip()
+        if provider_name:
+            if provider_name not in VOICE_PROVIDERS:
+                return VoiceActionResult(False, "关键词语音供应商无效")
+            if provider_name != self.settings.provider:
+                settings = VoiceSettings.from_dict(self.settings.to_dict())
+                settings.provider = provider_name
+                settings.model_id = VOICE_MODELS[provider_name][0]
+                return await VoiceManager(settings).synthesize_role_to_file(text, role_name)
         try:
             role = self._role(role_name)
         except KeyError:

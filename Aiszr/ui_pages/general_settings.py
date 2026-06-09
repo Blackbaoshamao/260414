@@ -44,7 +44,7 @@ class GeneralSettingsPage(SiPage):
 
         container.addTitle("关于")
         about_card = SiOptionCardLinear(self)
-        about_card.setTitle("Aiszr v0.2.0", "AI 数字人直播助手，基于 PyQt-SiliconUI 构建")
+        about_card.setTitle("Aiszr v0.5", "AI 数字人直播助手")
         about_card.load("ic_fluent_info_filled")
         container.addWidget(about_card)
 

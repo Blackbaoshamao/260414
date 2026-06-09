@@ -118,7 +118,7 @@ class LiveRoomPage(SiPage):
         self._status_label = QLabel("未连接")
         self._status_label.setFont(FONT_UI)
         self._status_label.setFixedWidth(130)
-        self._status_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+        self._status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         top_bar.addWidget(self._status_label)
 
         self._metrics_label = QLabel("")
@@ -167,6 +167,7 @@ class LiveRoomPage(SiPage):
         worker.metrics_updated.connect(self._on_metrics_updated)
         worker.parse_failure_count.connect(self._on_parse_failure)
         self._apply_theme_styles()
+        self._update_source_specific_controls()
         self._render_live_capture_controls()
 
     def resizeEvent(self, event):
@@ -286,6 +287,16 @@ class LiveRoomPage(SiPage):
         }
         self._set_status_label(colors.get(state, theme.CLR_TEXT_SEC), self._live_capture_message)
 
+    def _update_source_specific_controls(self):
+        is_wechat = self._capture_source == "wechat"
+        self._room_input.setVisible(not is_wechat)
+        self._connect_btn.setVisible(not is_wechat)
+        self._reset_btn.setVisible(not is_wechat)
+        self._live_capture_btn.setFixedWidth(138 if is_wechat else 120)
+        self._status_label.setFixedWidth(172 if is_wechat else 130)
+        if is_wechat:
+            self._room_input.clearFocus()
+
     def _on_source_changed(self, idx: int):
         data = self._source_combo.itemData(idx)
         if isinstance(data, str):
@@ -295,6 +306,7 @@ class LiveRoomPage(SiPage):
                 self.live_capture_toggle_requested.emit(False, old)
             self._display_dy.setVisible(self._capture_source != "wechat")
             self._display_wx.setVisible(self._capture_source == "wechat")
+            self._update_source_specific_controls()
             self._render_live_capture_controls()
 
     def _on_live_capture_button_clicked(self):

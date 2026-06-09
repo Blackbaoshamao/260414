@@ -3,6 +3,15 @@ import pytest
 from voice_train_service import VoiceTrainService, TrainProgress
 
 
+def _write_wav(path, seconds=5):
+    import wave, struct
+    with wave.open(str(path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(32000)
+        wf.writeframes(struct.pack("<h", 0) * int(32000 * seconds))
+
+
 def test_train_progress_defaults():
     p = TrainProgress()
     assert p.step == ""
@@ -83,4 +92,133 @@ def test_pretrained_s2g_path_v2pro(tmp_path):
 def test_pretrained_s2g_path_v2(tmp_path):
     service = VoiceTrainService(tmp_path, "python")
     path = service._pretrained_s2g_path("v2")
-    assert "s2G488k.pth" in path
+    assert "s2G2333k.pth" in path
+
+
+def test_pretrained_s1_path_v2proplus(tmp_path):
+    service = VoiceTrainService(tmp_path, "python")
+    path = service._pretrained_s1_path("v2ProPlus")
+    assert path.endswith("s1v3.ckpt")
+
+
+def test_resolve_training_version_prefers_v2proplus_when_available(tmp_path):
+    pretrained = tmp_path / "GPT_SoVITS" / "pretrained_models" / "v2Pro"
+    pretrained.mkdir(parents=True)
+    (pretrained / "s2Gv2ProPlus.pth").write_text("g")
+    (pretrained / "s2Dv2ProPlus.pth").write_text("d")
+    service = VoiceTrainService(tmp_path, "python")
+
+    assert service.resolve_training_version("auto") == "v2ProPlus"
+
+
+def test_pretrained_s2d_path_v2pro(tmp_path):
+    service = VoiceTrainService(tmp_path, "python")
+    path = service._pretrained_s2d_path("v2Pro")
+    assert "s2Dv2Pro.pth" in path
+
+
+def test_build_s2_config_includes_required_fields(tmp_path):
+    import json
+    service = VoiceTrainService(tmp_path, "python")
+    cfg = service._build_s2_config(tmp_path, "v2Pro", 4)
+    assert cfg["data"]["exp_dir"] == str(tmp_path)
+    assert cfg["model"]["version"] == "v2Pro"
+    assert cfg["train"]["epochs"] == 4
+    assert cfg["train"]["batch_size"] == 4
+    assert cfg["train"]["gpu_numbers"] == "0"
+    assert cfg["train"]["pretrained_s2G"]
+    assert cfg["train"]["pretrained_s2D"]
+    assert cfg["train"]["save_every_epoch"] == 1
+    assert cfg["save_weight_dir"] == str(tmp_path)
+    assert cfg["name"] == tmp_path.name
+    assert cfg["version"] == "v2Pro"
+
+
+def test_build_s1_config_has_top_level_paths(tmp_path):
+    service = VoiceTrainService(tmp_path, "python")
+    cfg = service._build_s1_config(tmp_path, "v2Pro", 6)
+    assert cfg["train_semantic_path"] == str(tmp_path / "6-name2semantic.tsv")
+    assert cfg["train_phoneme_path"] == str(tmp_path / "2-name2text.txt")
+    assert cfg["output_dir"] == str(tmp_path / "logs_s1_v2Pro")
+    assert cfg["train"]["exp_name"] == tmp_path.name
+    assert cfg["train"]["if_save_latest"] == 0
+    assert cfg["pretrained_s1"].endswith("s1v3.ckpt")
+
+
+def test_merge_part_file(tmp_path):
+    part = tmp_path / "2-name2text-0.txt"
+    part.write_text("line1\tval1\tval2\tval3\nline2\tval4\tval5\tval6\n", encoding="utf-8")
+    VoiceTrainService._merge_part_file(tmp_path, "2-name2text", ".txt")
+    merged = tmp_path / "2-name2text.txt"
+    assert merged.is_file()
+    assert not part.exists()
+    content = merged.read_text(encoding="utf-8")
+    assert "line1\tval1" in content
+    assert content.endswith("\n")
+
+
+def test_merge_part_file_with_header(tmp_path):
+    part = tmp_path / "6-name2semantic-0.tsv"
+    part.write_text("audio1\tsem1\naudio2\tsem2\n", encoding="utf-8")
+    VoiceTrainService._merge_part_file(tmp_path, "6-name2semantic", ".tsv", header="item_name\tsemantic_audio")
+    merged = tmp_path / "6-name2semantic.tsv"
+    content = merged.read_text(encoding="utf-8")
+    assert content.startswith("item_name\tsemantic_audio\n")
+    assert "audio1\tsem1" in content
+
+
+def test_merge_part_file_no_part_file(tmp_path):
+    VoiceTrainService._merge_part_file(tmp_path, "2-name2text", ".txt")
+    assert not (tmp_path / "2-name2text.txt").is_file()
+
+
+def test_ensure_data_consistency_removes_mismatch(tmp_path):
+    phoneme = tmp_path / "2-name2text.txt"
+    semantic = tmp_path / "6-name2semantic.tsv"
+    phoneme.write_text("good.wav\tp1\tp2\tp3\n", encoding="utf-8")
+    semantic.write_text("item_name\tsemantic_audio\ngood.wav\t1 2 3\nbad.wav\t4 5 6\n", encoding="utf-8")
+    count = VoiceTrainService._ensure_data_consistency(tmp_path)
+    assert count == 1
+    lines = semantic.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 2  # header + 1 data row
+    assert "bad.wav" not in semantic.read_text(encoding="utf-8")
+
+
+def test_ensure_data_consistency_keeps_all_matching(tmp_path):
+    phoneme = tmp_path / "2-name2text.txt"
+    semantic = tmp_path / "6-name2semantic.tsv"
+    phoneme.write_text("a.wav\tp1\tp2\tp3\nb.wav\tp4\tp5\tp6\n", encoding="utf-8")
+    semantic.write_text("item_name\tsemantic_audio\na.wav\t1 2\nb.wav\t3 4\n", encoding="utf-8")
+    count = VoiceTrainService._ensure_data_consistency(tmp_path)
+    assert count == 2
+
+
+def test_ensure_data_consistency_empty(tmp_path):
+    count = VoiceTrainService._ensure_data_consistency(tmp_path)
+    assert count == 0
+
+
+def test_inject_sovits_config_skips_gpt_sovits_header_weights(tmp_path):
+    ckpt = tmp_path / "voice_e8_s200.pth"
+    ckpt.write_bytes(b"06not-a-plain-pickle")
+
+    VoiceTrainService._inject_sovits_config(ckpt, {"model": {"version": "v2ProPlus"}})
+
+    assert ckpt.read_bytes() == b"06not-a-plain-pickle"
+
+
+def test_pick_ref_from_sliced_prefers_balanced_prompt_text(tmp_path):
+    excited = tmp_path / "excited.wav"
+    balanced = tmp_path / "balanced.wav"
+    _write_wav(excited, seconds=5.5)
+    _write_wav(balanced, seconds=5.5)
+    asr_list = tmp_path / "sliced.list"
+    asr_list.write_text(
+        f"{excited}|sliced|ZH|今天第1号链接必须马上拍！！！\n"
+        f"{balanced}|sliced|ZH|家里有老人和小孩都可以放心使用。\n",
+        encoding="utf-8",
+    )
+
+    ref = VoiceTrainService._pick_ref_from_sliced([excited, balanced], asr_list)
+
+    assert ref == balanced

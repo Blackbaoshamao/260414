@@ -1,18 +1,20 @@
 """关键词回复编辑页 — 横向网格布局，对齐 HomePage 风格。
 
-左主区: 关键词规则卡（内联操作行 + 规则列表 + per-row 删除 + 命中计数 caption）
+左主区: 关键词规则卡（内联操作行 + 规则列表 + per-row 删除）
 右侧栏: 模板管理卡 + 相关设置卡 + 匹配模式说明卡
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+import asyncio
+import threading
 
-from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtGui import QFont, QIntValidator
+from PyQt5.QtCore import pyqtSignal, Qt, QSize, QTimer
+from PyQt5.QtGui import QFont, QIntValidator, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QLabel, QTextEdit, QWidget, QHBoxLayout, QVBoxLayout,
-    QGridLayout, QSizePolicy, QScrollArea, QFrame,
+    QGridLayout, QSizePolicy, QScrollArea, QFrame, QGraphicsDropShadowEffect,
+    QPushButton,
 )
 import ui_theme as theme
 
@@ -22,11 +24,89 @@ from ui_components import MacCard, MacButton, MacLineEdit, MacComboBox
 from siui.components.page import SiPage
 
 from keyword_engine import KeywordEngine, KeywordTemplate, KeywordRule
+from keyword_rewriter import KeywordRewriteError, rewrite_keyword_reply
 from ui_settings import _load_settings, _save_settings
 
 
 _MODE_LABELS = ["包含", "完全匹配", "正则表达式"]
 _MODE_VALUES = ["contains", "exact", "regex"]
+_MODE_KEYWORD_PLACEHOLDERS = {
+    "contains": "关键词使用逗号和-隔开",
+    "exact": "完整弹幕使用逗号和-隔开",
+    "regex": "格式：正则，如 ^价格.*多少",
+}
+_REPLY_PLACEHOLDER = "格式：回复话术，如 已确认，稍后为你处理"
+_DEFAULT_KEYWORD_VOICE_PROVIDER = "local_voice"
+_KEYWORD_VOICE_PROVIDER_OPTIONS = (
+    ("GPT-SoVITS", "local_voice"),
+    ("阿里云百炼", "aliyun_bailian"),
+)
+
+
+def _scaled_font(base: QFont, delta: int) -> QFont:
+    font = QFont(base)
+    size = font.pointSize()
+    if size > 0:
+        font.setPointSize(max(7, size + delta))
+    return font
+
+
+def _normalize_keyword_voice_provider(value: object) -> str:
+    provider = str(value or "").strip()
+    valid = {item[1] for item in _KEYWORD_VOICE_PROVIDER_OPTIONS}
+    return provider if provider in valid else _DEFAULT_KEYWORD_VOICE_PROVIDER
+
+
+def _trash_icon(color: str) -> QIcon:
+    try:
+        import qtawesome as qta
+
+        return qta.icon("fa5s.trash-alt", color=color)
+    except Exception:
+        pass
+
+    pix = QPixmap(20, 20)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color), 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(5, 6, 15, 6)
+    painter.drawLine(8, 4, 12, 4)
+    painter.drawLine(7, 8, 8, 16)
+    painter.drawLine(13, 8, 12, 16)
+    painter.drawLine(8, 16, 12, 16)
+    painter.drawLine(10, 9, 10, 15)
+    painter.end()
+    return QIcon(pix)
+
+
+def _rewrite_icon(color: str) -> QIcon:
+    try:
+        import qtawesome as qta
+
+        return qta.icon("fa5s.magic", color=color)
+    except Exception:
+        pass
+
+    pix = QPixmap(18, 18)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color), 1.6)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(5, 13, 13, 5)
+    painter.drawLine(11, 3, 15, 7)
+    painter.drawLine(3, 5, 3, 8)
+    painter.drawLine(1, 6, 5, 6)
+    painter.drawLine(14, 11, 14, 14)
+    painter.drawLine(12, 13, 16, 13)
+    painter.end()
+    return QIcon(pix)
 
 
 def _make_back_button(parent, back_signal) -> QWidget:
@@ -48,14 +128,15 @@ class KeywordReplyPage(SiPage):
     auto_reply_toggled = pyqtSignal(bool)
     rules_changed = pyqtSignal()                # 用户保存了规则
     related_settings_changed = pyqtSignal()     # 用户改了冷却 / 速率限制
+    _rewrite_finished = pyqtSignal(object, str, str)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._engine = KeywordEngine()
         self._rule_widgets: list[dict] = []
         self._empty_card: QFrame | None = None
-        self._hit_stats: dict[str, tuple[int, str]] = {}  # keyword → (count, hh:mm:ss)
         self._dirty = False
+        self._rewrite_finished.connect(self._on_rewrite_finished)
         self.setPadding(18)
         self.setScrollMaximumWidth(1520)
 
@@ -79,6 +160,7 @@ class KeywordReplyPage(SiPage):
         right_col.addWidget(self._build_template_card())
         right_col.addWidget(self._build_related_settings_card())
         right_col.addWidget(self._build_help_card())
+        right_col.addWidget(self._build_voice_hint_card())
         right_col.addStretch(1)
         grid.addLayout(right_col, 0, 1)
 
@@ -278,13 +360,41 @@ class KeywordReplyPage(SiPage):
                 f"border: 1px solid {theme.CLR_HAIRLINE}; border-radius: {theme.RADIUS_SM}px; }}"
             )
             ly = QVBoxLayout(wrap)
-            ly.setContentsMargins(10, 7, 10, 7)
-            ly.setSpacing(2)
+            ly.setContentsMargins(8, 5, 8, 5)
+            ly.setSpacing(1)
             t = QLabel(title)
-            t.setFont(theme.FONT_BODY_EMPH)
+            t.setFont(_scaled_font(theme.FONT_BODY_EMPH, -2))
             ly.addWidget(t)
             d = QLabel(desc)
-            d.setFont(theme.FONT_CAPTION)
+            d.setFont(_scaled_font(theme.FONT_CAPTION, -2))
+            d.setWordWrap(True)
+            ly.addWidget(d)
+            body.addWidget(wrap)
+        return card
+
+    def _build_voice_hint_card(self) -> MacCard:
+        card = MacCard(self, title="语音提示")
+        body = card.body()
+        body.setSpacing(6)
+        for title, desc in (
+            ("开启语音", "只生成语音并插入数字人，不发送文字回复"),
+            ("关闭语音", "使用文字回复，直接注入评论框"),
+            ("播放条件", "数字人推流中才会插入语音"),
+        ):
+            wrap = QFrame(card)
+            wrap.setObjectName("KeywordVoiceHintItem")
+            wrap.setStyleSheet(
+                f"QFrame#KeywordVoiceHintItem {{ background: {theme.CLR_BG_ELEVATED}; "
+                f"border: 1px solid {theme.CLR_HAIRLINE}; border-radius: {theme.RADIUS_SM}px; }}"
+            )
+            ly = QVBoxLayout(wrap)
+            ly.setContentsMargins(8, 5, 8, 5)
+            ly.setSpacing(1)
+            t = QLabel(title)
+            t.setFont(_scaled_font(theme.FONT_BODY_EMPH, -2))
+            ly.addWidget(t)
+            d = QLabel(desc)
+            d.setFont(_scaled_font(theme.FONT_CAPTION, -2))
             d.setWordWrap(True)
             ly.addWidget(d)
             body.addWidget(wrap)
@@ -303,6 +413,20 @@ class KeywordReplyPage(SiPage):
         add_btn.setFixedSize(118, 32)
         add_btn.clicked.connect(self._add_rule)
         ops.addWidget(add_btn)
+
+        voice_label = QLabel("语音模型")
+        voice_label.setFont(theme.FONT_CAPTION)
+        voice_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_SEC}; background: transparent; border: none;"
+        )
+        ops.addWidget(voice_label)
+
+        self._voice_provider_combo = MacComboBox()
+        self._voice_provider_combo.setFixedSize(168, 32)
+        for label, value in _KEYWORD_VOICE_PROVIDER_OPTIONS:
+            self._voice_provider_combo.addItem(label, value)
+        self._voice_provider_combo.currentIndexChanged.connect(self._on_voice_provider_changed)
+        ops.addWidget(self._voice_provider_combo)
 
         self._rules_summary_label = QLabel("0 条规则")
         self._rules_summary_label.setFont(theme.FONT_CAPTION)
@@ -359,16 +483,50 @@ class KeywordReplyPage(SiPage):
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
         )
 
-    def _voice_toggle_stylesheet(self) -> str:
-        bg = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_BG_CARD, 0.40)
-        border = theme._mix_hex_colors(theme.CLR_BORDER, theme.CLR_TEXT_PRI, 0.04)
+    def _trash_button_stylesheet(self) -> str:
+        hover = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_RED, 0.12)
+        pressed = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_RED, 0.20)
         return (
-            f"QFrame#KeywordVoiceToggle {{"
-            f"background-color: {bg};"
-            f"border: 1px solid {border};"
-            f"border-radius: 16px;"
-            f"}}"
+            "QPushButton {"
+            "background-color: transparent;"
+            "border: none;"
+            f"border-radius: {theme.RADIUS_MD}px;"
+            "padding: 0;"
+            "}"
+            f"QPushButton:hover {{ background-color: {hover}; }}"
+            f"QPushButton:pressed {{ background-color: {pressed}; }}"
         )
+
+    def _rewrite_button_stylesheet(self) -> str:
+        return (
+            "QPushButton#KeywordRewriteButton {"
+            "background-color: #E9EAEE;"
+            "color: #000000;"
+            "border: 1px solid #A6ABB5;"
+            "border-radius: 7px;"
+            "padding: 0 11px 0 9px;"
+            "font-weight: 600;"
+            "}"
+            "QPushButton#KeywordRewriteButton:hover {"
+            "background-color: #F6F7F9;"
+            "color: #000000;"
+            "border-color: #8D94A1;"
+            "}"
+            "QPushButton#KeywordRewriteButton:pressed {"
+            "background-color: #D7DAE0;"
+            "color: #000000;"
+            "border-color: #858B96;"
+            "padding-top: 1px;"
+            "}"
+            "QPushButton#KeywordRewriteButton:disabled { color: #000000; background-color: #E5E7EC; }"
+        )
+
+    def _apply_rewrite_button_effect(self, button: QWidget):
+        shadow = QGraphicsDropShadowEffect(button)
+        shadow.setBlurRadius(10)
+        shadow.setOffset(0, 1)
+        shadow.setColor(QColor(0, 0, 0, 34))
+        button.setGraphicsEffect(shadow)
 
     # 规则区按内容收缩；规则很多时才在内部滚动，避免截图里的大面积空白。
     _CHROME_OFFSET = 198
@@ -427,15 +585,21 @@ class KeywordReplyPage(SiPage):
                 mode_combo.setCurrentIndex(_MODE_VALUES.index(rule.match_mode))
             except ValueError:
                 mode_combo.setCurrentIndex(0)
-        mode_combo.currentIndexChanged.connect(lambda _: self._set_dirty(True))
+        def update_keyword_placeholder():
+            mode = _MODE_VALUES[mode_combo.currentIndex()]
+            kw_edit.setPlaceholderText(_MODE_KEYWORD_PLACEHOLDERS.get(mode, "格式：关键词"))
+
+        mode_combo.currentIndexChanged.connect(
+            lambda _: (update_keyword_placeholder(), self._set_dirty(True))
+        )
+        update_keyword_placeholder()
         top_row.addWidget(mode_combo)
 
-        voice_cluster = QFrame(card)
-        voice_cluster.setObjectName("KeywordVoiceToggle")
-        voice_cluster.setFixedHeight(32)
-        voice_cluster.setStyleSheet(self._voice_toggle_stylesheet())
+        voice_cluster = QWidget(card)
+        voice_cluster.setFixedHeight(28)
+        voice_cluster.setStyleSheet("background: transparent; border: none;")
         voice_layout = QHBoxLayout(voice_cluster)
-        voice_layout.setContentsMargins(10, 0, 8, 0)
+        voice_layout.setContentsMargins(0, 0, 0, 0)
         voice_layout.setSpacing(theme.SPACING_XS)
         voice_label = QLabel("语音")
         voice_label.setFont(theme.FONT_CAPTION)
@@ -443,7 +607,7 @@ class KeywordReplyPage(SiPage):
             f"color: {theme.CLR_TEXT_SEC}; background: transparent; border: none;"
         )
         voice_layout.addWidget(voice_label)
-        voice_switch = SiSwitch(voice_cluster)
+        voice_switch = SiSwitch(voice_cluster, width=38, height=22)
         if rule:
             voice_switch.setChecked(rule.generate_voice)
         voice_switch.toggled.connect(lambda _: (self._set_dirty(True), self._refresh_rules_summary()))
@@ -452,13 +616,30 @@ class KeywordReplyPage(SiPage):
 
         top_row.addStretch(1)
 
-        del_btn = MacButton("删除", variant="secondary")
-        del_btn.setFixedSize(58, 30)
+        rewrite_btn = QPushButton("改写", card)
+        rewrite_btn.setObjectName("KeywordRewriteButton")
+        rewrite_btn.setCursor(Qt.PointingHandCursor)
+        rewrite_btn.setFixedSize(76, 30)
+        rewrite_btn.setFlat(False)
+        rewrite_btn.setFont(_scaled_font(theme.FONT_CAPTION, 0))
+        rewrite_btn.setIcon(_rewrite_icon("#111111"))
+        rewrite_btn.setIconSize(QSize(14, 14))
+        rewrite_btn.setToolTip("")
+        rewrite_btn.setStyleSheet(self._rewrite_button_stylesheet())
+        self._apply_rewrite_button_effect(rewrite_btn)
+        top_row.addWidget(rewrite_btn)
+
+        del_btn = MacButton("", variant="ghost")
+        del_btn.setFixedSize(34, 30)
+        del_btn.setToolTip("删除规则")
+        del_btn.setIcon(_trash_icon(theme.CLR_RED))
+        del_btn.setIconSize(QSize(18, 18))
+        del_btn.setStyleSheet(self._trash_button_stylesheet())
         top_row.addWidget(del_btn)
         body.addWidget(top_row_widget)
 
         reply_edit = QTextEdit()
-        reply_edit.setPlaceholderText("回复话术")
+        reply_edit.setPlaceholderText(_REPLY_PLACEHOLDER)
         reply_edit.setFixedHeight(46)
         reply_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         reply_edit.setStyleSheet(_build_text_area_stylesheet(
@@ -468,19 +649,86 @@ class KeywordReplyPage(SiPage):
         reply_edit.textChanged.connect(lambda: self._set_dirty(True))
         body.addWidget(reply_edit)
 
-        hit_label = QLabel("命中 0 次")
-        hit_label.setFont(theme.FONT_CAPTION)
-        hit_label.setStyleSheet(
-            f"color: {theme.CLR_TEXT_TERT}; background: transparent; border: none;"
-        )
-        body.addWidget(hit_label)
-
         widgets = {
             "kw": kw_edit, "reply": reply_edit, "mode": mode_combo,
-            "voice": voice_switch, "card": card, "hit": hit_label,
+            "voice": voice_switch, "rewrite": rewrite_btn, "card": card,
         }
+        rewrite_btn.clicked.connect(lambda: self._rewrite_rule_reply(widgets))
         del_btn.clicked.connect(lambda: self._delete_rule(widgets))
         return card, widgets
+
+    def _flash_rewrite_button(self, widgets: dict, text: str, tooltip: str = ""):
+        btn = widgets.get("rewrite")
+        if btn is None:
+            return
+        try:
+            btn.setText(text)
+            btn.setToolTip("")
+            btn.setStyleSheet(self._rewrite_button_stylesheet())
+        except RuntimeError:
+            return
+
+        def reset_button():
+            try:
+                btn.setText("改写")
+                btn.setToolTip("")
+                btn.setEnabled(True)
+                btn.setStyleSheet(self._rewrite_button_stylesheet())
+            except RuntimeError:
+                pass
+
+        QTimer.singleShot(
+            1400,
+            reset_button,
+        )
+
+    def _rewrite_rule_reply(self, widgets: dict):
+        reply_edit = widgets.get("reply")
+        btn = widgets.get("rewrite")
+        if reply_edit is None or btn is None:
+            return
+        try:
+            text = reply_edit.toPlainText().strip()
+        except RuntimeError:
+            return
+        if not text:
+            self._flash_rewrite_button(widgets, "先填", "请先填写回复话术")
+            return
+
+        try:
+            btn.setEnabled(False)
+            btn.setText("...")
+            btn.setToolTip("")
+            btn.setStyleSheet(self._rewrite_button_stylesheet())
+        except RuntimeError:
+            return
+        settings = _load_settings()
+
+        def run():
+            try:
+                rewritten = asyncio.run(rewrite_keyword_reply(text, settings))
+                self._rewrite_finished.emit(widgets, rewritten, "")
+            except KeywordRewriteError as e:
+                self._rewrite_finished.emit(widgets, "", str(e))
+            except Exception as e:
+                self._rewrite_finished.emit(widgets, "", f"改写失败：{e}")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _on_rewrite_finished(self, widgets: dict, rewritten: str, error: str):
+        reply_edit = widgets.get("reply")
+        btn = widgets.get("rewrite")
+        if reply_edit is None or btn is None:
+            return
+        if error:
+            self._flash_rewrite_button(widgets, "失败", error)
+            return
+        try:
+            reply_edit.setPlainText(rewritten)
+        except RuntimeError:
+            return
+        self._set_dirty(True)
+        self._flash_rewrite_button(widgets, "已改", "改写完成")
 
     def _apply_rule_row_style(self, card: QFrame):
         bg = theme._mix_hex_colors(theme.CLR_BG_CARD, theme.CLR_BG_ELEVATED, 0.38)
@@ -617,21 +865,11 @@ class KeywordReplyPage(SiPage):
                 card, widgets = self._make_rule_widget(rule)
                 self._rules_layout.addWidget(card)
                 self._rule_widgets.append(widgets)
-                self._refresh_hit_caption(widgets)
         if not self._rule_widgets:
             self._show_empty_card()
         self._refresh_rules_summary()
         self._update_rules_scroll_height()
         self._set_dirty(False)
-
-    def _refresh_hit_caption(self, widgets: dict):
-        kw = widgets["kw"].text()
-        stat = self._hit_stats.get(kw)
-        if stat is None:
-            widgets["hit"].setText("命中 0 次")
-        else:
-            count, ts = stat
-            widgets["hit"].setText(f"命中 {count} 次 · 最近 {ts}")
 
     def _refresh_rules_summary(self):
         if not hasattr(self, "_rules_summary_label"):
@@ -644,6 +882,9 @@ class KeywordReplyPage(SiPage):
 
     def _load_from_settings(self):
         data = _load_settings()
+        self.set_keyword_voice_provider(
+            data.get("keyword_voice_provider", _DEFAULT_KEYWORD_VOICE_PROVIDER)
+        )
         self._engine.load_templates(data)
         names = self._engine.get_template_names()
         self._tmpl_combo.blockSignals(True)
@@ -673,6 +914,7 @@ class KeywordReplyPage(SiPage):
             for name, tmpl in self._engine._templates.items()
         }
         data["keyword_templates"] = tmpl_data
+        data["keyword_voice_provider"] = self.get_keyword_voice_provider()
         _save_settings(data)
         self._set_dirty(False)
         self.rules_changed.emit()
@@ -689,6 +931,24 @@ class KeywordReplyPage(SiPage):
 
     def get_active_template_name(self) -> str:
         return self._tmpl_combo.currentText()
+
+    def get_keyword_voice_provider(self) -> str:
+        if not hasattr(self, "_voice_provider_combo"):
+            return _DEFAULT_KEYWORD_VOICE_PROVIDER
+        return _normalize_keyword_voice_provider(self._voice_provider_combo.currentData())
+
+    def set_keyword_voice_provider(self, provider: object):
+        if not hasattr(self, "_voice_provider_combo"):
+            return
+        provider = _normalize_keyword_voice_provider(provider)
+        self._voice_provider_combo.blockSignals(True)
+        try:
+            for idx in range(self._voice_provider_combo.count()):
+                if self._voice_provider_combo.itemData(idx) == provider:
+                    self._voice_provider_combo.setCurrentIndex(idx)
+                    break
+        finally:
+            self._voice_provider_combo.blockSignals(False)
 
     def set_active_template_name(self, name: str):
         if not name:
@@ -717,13 +977,6 @@ class KeywordReplyPage(SiPage):
             self._rate_edit.setText(str(int(rate_per_min)))
             self._rate_edit.blockSignals(False)
 
-    def on_rule_hit(self, keyword: str, count: int):
-        ts = datetime.now().strftime("%H:%M:%S")
-        self._hit_stats[keyword] = (count, ts)
-        for w in self._rule_widgets:
-            if w["kw"].text() == keyword:
-                w["hit"].setText(f"命中 {count} 次 · 最近 {ts}")
-
     # ── Internal signal slots ──────────────────────────────
 
     def _on_auto_reply_toggled(self, checked: bool):
@@ -741,6 +994,12 @@ class KeywordReplyPage(SiPage):
         data = _load_settings()
         data["keyword_auto_reply_global_cooldown_sec"] = max(0, cd)
         data["keyword_auto_reply_rate_limit_per_min"] = max(1, rt)
+        _save_settings(data)
+        self.related_settings_changed.emit()
+
+    def _on_voice_provider_changed(self, _index: int = -1):
+        data = _load_settings()
+        data["keyword_voice_provider"] = self.get_keyword_voice_provider()
         _save_settings(data)
         self.related_settings_changed.emit()
 
@@ -765,8 +1024,6 @@ class KeywordReplyPage(SiPage):
                 fn()
         for frame in self.findChildren(QFrame, "KeywordRuleRow"):
             self._apply_rule_row_style(frame)
-        for frame in self.findChildren(QFrame, "KeywordVoiceToggle"):
-            frame.setStyleSheet(self._voice_toggle_stylesheet())
         for frame in self.findChildren(QFrame, "KeywordEmptyState"):
             frame.setStyleSheet(
                 f"QFrame#KeywordEmptyState {{ background-color: {theme.CLR_BG_ELEVATED}; "
@@ -775,6 +1032,11 @@ class KeywordReplyPage(SiPage):
         for frame in self.findChildren(QFrame, "KeywordHelpItem"):
             frame.setStyleSheet(
                 f"QFrame#KeywordHelpItem {{ background: {theme.CLR_BG_ELEVATED}; "
+                f"border: 1px solid {theme.CLR_HAIRLINE}; border-radius: {theme.RADIUS_SM}px; }}"
+            )
+        for frame in self.findChildren(QFrame, "KeywordVoiceHintItem"):
+            frame.setStyleSheet(
+                f"QFrame#KeywordVoiceHintItem {{ background: {theme.CLR_BG_ELEVATED}; "
                 f"border: 1px solid {theme.CLR_HAIRLINE}; border-radius: {theme.RADIUS_SM}px; }}"
             )
         for te in self.findChildren(QTextEdit):

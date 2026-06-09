@@ -2,6 +2,7 @@ python39.zip
 .
 ..
 ../tools
+../GPT_SoVITS
 
 # Uncomment to run site.main() automatically
 import site

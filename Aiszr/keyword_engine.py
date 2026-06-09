@@ -15,6 +15,13 @@ import re
 from dataclasses import dataclass, field
 
 
+_KEYWORD_TERM_SEPARATOR_RE = re.compile(r"[，,\-]+")
+
+
+def _keyword_terms(keyword: str) -> list[str]:
+    return [term.strip() for term in _KEYWORD_TERM_SEPARATOR_RE.split(keyword) if term.strip()]
+
+
 @dataclass(slots=True)
 class KeywordRule:
     keyword: str
@@ -83,10 +90,11 @@ class KeywordEngine:
         if not kw or not text:
             return False
         if mode == "exact":
-            return text.strip() == kw.strip()
+            target = text.strip()
+            return any(target == term for term in _keyword_terms(kw))
         if mode == "regex":
             try:
                 return re.search(kw, text) is not None
             except re.error:
                 return False
-        return kw in text  # contains (default)
+        return any(term in text for term in _keyword_terms(kw))  # contains (default)

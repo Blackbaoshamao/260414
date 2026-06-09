@@ -103,6 +103,29 @@ class LocalVoiceRuntime:
             proc.kill()
             await proc.wait()
 
+    @staticmethod
+    def _reset_custom_config(config_path: Path, root: Path) -> None:
+        """将 tts_infer.yaml 的 custom 节重置为 v2 默认值，避免残留的错误权重路径。"""
+        try:
+            import yaml
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            v2 = cfg.get("v2", {})
+            if not v2:
+                return
+            custom = cfg.setdefault("custom", {})
+            custom["t2s_weights_path"] = v2.get("t2s_weights_path", "")
+            custom["vits_weights_path"] = v2.get("vits_weights_path", "")
+            custom["version"] = v2.get("version", "v2")
+            custom["device"] = "cuda"
+            custom["is_half"] = True
+            custom["bert_base_path"] = v2.get("bert_base_path", "")
+            custom["cnhuhbert_base_path"] = v2.get("cnhuhbert_base_path", "")
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+        except Exception:
+            pass
+
     async def _start_process(self) -> LocalVoiceRuntimeResult:
         root = default_gpt_sovits_root()
         api_script = root / "api_v2.py"
@@ -119,6 +142,8 @@ class LocalVoiceRuntime:
                 f"GPT-SoVITS config missing: {config_path}",
                 self.endpoint,
             )
+        # 重置 custom 配置为 v2 默认值，防止上次残留的错误路径导致启动失败
+        self._reset_custom_config(config_path, root)
         python_exe = default_gpt_sovits_python(root)
         if not python_exe.is_file():
             return LocalVoiceRuntimeResult(
@@ -209,6 +234,7 @@ class LocalVoiceRuntime:
 
     @staticmethod
     async def _drain_stdout(proc: asyncio.subprocess.Process) -> None:
+        from loguru import logger
         stream = proc.stdout
         if stream is None:
             return
@@ -216,6 +242,11 @@ class LocalVoiceRuntime:
             chunk = await stream.readline()
             if not chunk:
                 break
+            try:
+                line = chunk.decode("utf-8")
+            except UnicodeDecodeError:
+                line = chunk.decode("gbk", errors="replace")
+            logger.debug("GPT-SoVITS: {}", line.rstrip())
 
 
 _runtime: LocalVoiceRuntime | None = None

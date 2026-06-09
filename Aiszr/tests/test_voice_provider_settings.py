@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import local_voice_runtime as local_voice_runtime_module
 import voice_manager as voice_manager_module
 from ui_constants import _VOICE_PROVIDER_API_FIELDS
 from local_voice_runtime import DEFAULT_LOCAL_VOICE_ENDPOINT
@@ -35,6 +36,14 @@ def _write_wav(path):
         wav_file.setsampwidth(2)
         wav_file.setframerate(24000)
         wav_file.writeframes(b"\x00\x00" * 64)
+
+
+def _write_wav_seconds(path, seconds=4):
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(24000)
+        wav_file.writeframes(b"\x00\x00" * int(24000 * seconds))
 
 
 def _wav_bytes(tmp_path):
@@ -176,7 +185,7 @@ async def test_gpt_sovits_synthesize_posts_to_tts_and_writes_wav(tmp_path, monke
     assert result.ok is True
     assert result.output_path.endswith(".wav")
     assert calls[0][0] == "http://127.0.0.1:9880/tts"
-    assert calls[0][2] == 120.0
+    assert calls[0][2] == 300.0
     payload = calls[0][1]
     assert payload["text"] == "欢迎来到直播间"
     assert payload["text_lang"] == "zh"
@@ -188,6 +197,12 @@ async def test_gpt_sovits_synthesize_posts_to_tts_and_writes_wav(tmp_path, monke
     assert payload["media_type"] == "wav"
     assert payload["streaming_mode"] is False
     assert payload["speed_factor"] == pytest.approx(1.25)
+    assert payload["top_k"] == 10
+    assert payload["top_p"] == pytest.approx(0.85)
+    assert payload["temperature"] == pytest.approx(0.7)
+    assert payload["parallel_infer"] is False
+    assert payload["repetition_penalty"] == pytest.approx(1.2)
+    assert payload["seed"] == 1234
 
 
 @pytest.mark.asyncio
@@ -221,6 +236,68 @@ async def test_gpt_sovits_synthesize_falls_back_to_config_reference_audio(tmp_pa
 
     assert result.ok is True
     assert calls[0]["ref_audio_path"] == str(reference)
+
+
+@pytest.mark.asyncio
+async def test_gpt_sovits_trained_model_uses_pretrained_gpt_by_default(tmp_path, monkeypatch):
+    model_dir = tmp_path / "trained_models" / "voice"
+    sliced_dir = model_dir / "sliced"
+    asr_dir = model_dir / "asr_output"
+    sovits_dir = model_dir / "logs_s2_v2"
+    sliced_dir.mkdir(parents=True)
+    asr_dir.mkdir()
+    sovits_dir.mkdir()
+    reference = sliced_dir / "ref.wav"
+    _write_wav_seconds(reference)
+    (asr_dir / "sliced.list").write_text(
+        f"{reference}|sliced|ZH|参考文本\n",
+        encoding="utf-8",
+    )
+    fine_tuned_gpt = model_dir / "voice-e6.ckpt"
+    fine_tuned_gpt.write_bytes(b"bad gpt")
+    sovits_ckpt = sovits_dir / "G_100.pth"
+    sovits_ckpt.write_bytes(b"sovits")
+    pretrained_gpt = tmp_path / "pretrained.ckpt"
+    pretrained_gpt.write_bytes(b"pretrained")
+    calls = []
+    switch_calls = []
+
+    class FakeResponse:
+        status_code = 200
+        content = _wav_bytes(tmp_path)
+        headers = {"content-type": "audio/wav"}
+        text = ""
+
+        def json(self):
+            return {}
+
+    def fake_post(url, *, json, timeout):
+        calls.append(json)
+        return FakeResponse()
+
+    async def fake_switch(gpt_ckpt="", sovits_ckpt=""):
+        switch_calls.append({"gpt_ckpt": gpt_ckpt, "sovits_ckpt": sovits_ckpt})
+        return True, "ok"
+
+    monkeypatch.delenv("GPT_SOVITS_USE_FINE_TUNED_GPT", raising=False)
+    monkeypatch.setattr(voice_manager_module, "_default_local_voice_gpt_ckpt", lambda version="v2": pretrained_gpt)
+    monkeypatch.setattr(local_voice_runtime_module, "switch_local_voice_weights", fake_switch)
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=fake_post))
+
+    provider = LocalVoiceProvider(VoiceProviderApiConfig(endpoint="http://127.0.0.1:9880"))
+
+    result = await provider.synthesize(
+        "测试",
+        str(reference),
+        tmp_path,
+        trained_model_dir=str(model_dir),
+    )
+
+    assert result.ok is True
+    assert switch_calls[0]["gpt_ckpt"] == str(pretrained_gpt)
+    assert switch_calls[0]["gpt_ckpt"] != str(fine_tuned_gpt)
+    assert switch_calls[0]["sovits_ckpt"] == str(sovits_ckpt)
+    assert calls[0]["prompt_text"] == "参考文本"
 
 
 @pytest.mark.asyncio

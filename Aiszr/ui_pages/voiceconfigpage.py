@@ -42,7 +42,7 @@ from siui.components.slider import SiSliderH
 from siui.templates.application.components.dialog.modal import SiModalDialog
 import ui_theme as theme
 from loguru import logger
-from ui_constants import _CARD_H
+from ui_constants import _CARD_W, _CARD_H
 from ui import _AddCard, _VideoThumbCard
 from ui_components import MacButton
 from avatar_library import (
@@ -61,7 +61,44 @@ from avatar_preprocessor import AvatarPreprocessManager
 from livetalking_runtime import default_livetalking_root
 
 
+class _HalfHighlightTitle(QLabel):
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        font = QFont(self.font())
+        font.setPixelSize(20)
+        font.setBold(True)
+        self.setFont(font)
+        self.setFixedHeight(26)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 10, 26)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        text_width = self.fontMetrics().horizontalAdvance(self.text())
+        highlight = QColor(theme.CLR_ACCENT_LIGHT)
+        highlight.setAlpha(95)
+        painter.setBrush(QBrush(highlight))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(
+            QRect(0, self.height() - 10, min(self.width(), text_width + 10), 8),
+            4,
+            4,
+        )
+
+        painter.setPen(QColor(theme.CLR_TEXT_PRI))
+        painter.setFont(self.font())
+        painter.drawText(self.rect(), Qt.AlignLeft | Qt.AlignVCenter, self.text())
+        painter.end()
+
+
 class VoiceConfigPage(SiPage):
+    _GALLERY_COLUMNS = 3
+    _GALLERY_GAP = 12
+
     back_requested = pyqtSignal()
     api_settings_requested = pyqtSignal()
     clone_dialog_requested = pyqtSignal()
@@ -369,37 +406,73 @@ class VoiceConfigPage(SiPage):
         """
 
         container.addTitle("主播形象（右键移除，左键选中）")
-        self._gallery_inner = QWidget(self)
-        self._gallery_inner.setFixedHeight(_CARD_H)
+        gallery_stream_row = QWidget(self)
+        self._gallery_stream_row = gallery_stream_row
+        gallery_area_height = self._gallery_height_for_count(MAX_AVATAR_RECORDS)
+        self._gallery_stream_row.setFixedHeight(gallery_area_height)
+        self._gallery_stream_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        gallery_stream_layout = QHBoxLayout(gallery_stream_row)
+        gallery_stream_layout.setContentsMargins(0, 0, 0, 0)
+        gallery_stream_layout.setSpacing(36)
+
+        self._gallery_inner = QWidget(gallery_stream_row)
+        self._gallery_inner.setFixedHeight(gallery_area_height)
         self._gallery_inner.setStyleSheet("background: transparent;")
         self._gallery_inner.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self._gallery_layout = QHBoxLayout(self._gallery_inner)
+        self._gallery_layout = QGridLayout(self._gallery_inner)
         self._gallery_layout.setContentsMargins(0, 0, 0, 0)
-        self._gallery_layout.setSpacing(12)
-        container.addWidget(self._gallery_inner)
-        self._rebuild_gallery()
+        self._gallery_layout.setHorizontalSpacing(self._GALLERY_GAP)
+        self._gallery_layout.setVerticalSpacing(self._GALLERY_GAP)
+        self._gallery_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        gallery_stream_layout.addWidget(self._gallery_inner, 0, Qt.AlignLeft | Qt.AlignTop)
 
-        container.addTitle("推流控制")
-        self._stream_status_label = QLabel("空闲", self)
+        stream_panel = QWidget(gallery_stream_row)
+        stream_panel.setMinimumWidth(260)
+        stream_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        stream_panel_layout = QVBoxLayout(stream_panel)
+        stream_panel_layout.setContentsMargins(0, 0, 0, 0)
+        stream_panel_layout.setSpacing(10)
+
+        stream_title_row = QWidget(stream_panel)
+        stream_title_layout = QHBoxLayout(stream_title_row)
+        stream_title_layout.setContentsMargins(0, 0, 0, 0)
+        stream_title_layout.setSpacing(8)
+        self._stream_title_marker = QFrame(stream_title_row)
+        self._stream_title_marker.setFixedSize(4, 20)
+        self._stream_title_marker.setStyleSheet(
+            f"background-color: {theme.CLR_ACCENT}; border: none; border-radius: 2px;"
+        )
+        self._stream_title_label = _HalfHighlightTitle("推流控制", stream_title_row)
+        self._apply_stream_title_style()
+        stream_title_layout.addWidget(self._stream_title_marker)
+        stream_title_layout.addWidget(self._stream_title_label)
+        stream_title_layout.addStretch(1)
+        stream_panel_layout.addWidget(stream_title_row)
+
+        self._stream_status_label = QLabel("空闲", stream_panel)
         self._stream_status_label.setWordWrap(True)
         self._stream_status_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none; font-size: 13px;")
-        container.addWidget(self._stream_status_label)
+        stream_panel_layout.addWidget(self._stream_status_label)
 
-        stream_btn_row = QWidget(self)
+        stream_btn_row = QWidget(stream_panel)
         stream_btn_row.setFixedHeight(46)
         stream_btn_layout = QHBoxLayout(stream_btn_row)
         stream_btn_layout.setContentsMargins(0, 2, 0, 2)
         stream_btn_layout.setSpacing(8)
-        self._stream_start_btn = MacButton("一键推流", variant="primary", parent=self)
+        self._stream_start_btn = MacButton("一键推流", variant="primary", parent=stream_panel)
         self._stream_start_btn.setMinimumSize(120, 38)
         self._stream_start_btn.clicked.connect(self._on_stream_start)
         stream_btn_layout.addWidget(self._stream_start_btn)
-        self._stream_stop_btn = MacButton("停止推流", variant="secondary", parent=self)
+        self._stream_stop_btn = MacButton("停止推流", variant="secondary", parent=stream_panel)
         self._stream_stop_btn.setMinimumSize(100, 38)
         self._stream_stop_btn.clicked.connect(self._on_stream_stop)
         stream_btn_layout.addWidget(self._stream_stop_btn)
         stream_btn_layout.addStretch(1)
-        container.addWidget(stream_btn_row)
+        stream_panel_layout.addWidget(stream_btn_row)
+        stream_panel_layout.addStretch(1)
+        gallery_stream_layout.addWidget(stream_panel, 1, Qt.AlignTop)
+        container.addWidget(gallery_stream_row)
+        self._rebuild_gallery()
 
         self.setAttachment(container)
 
@@ -432,11 +505,20 @@ class VoiceConfigPage(SiPage):
         layout.addWidget(edit)
         return panel, label, edit
 
+    def _apply_stream_title_style(self):
+        if hasattr(self, "_stream_title_marker"):
+            self._stream_title_marker.setStyleSheet(
+                f"background-color: {theme.CLR_ACCENT}; border: none; border-radius: 2px;"
+            )
+        if hasattr(self, "_stream_title_label"):
+            self._stream_title_label.update()
+
     def _apply_theme_styles(self):
         try:
             SiGlobal.siui.reloadStyleSheetRecursively(self)
         except Exception:
             pass
+        self._apply_stream_title_style()
 
         field_ss = _build_input_field_stylesheet(
             "QLineEdit, QSpinBox", radius=theme.RADIUS_MD)
@@ -839,6 +921,10 @@ class VoiceConfigPage(SiPage):
     # kept defined in this module for fallback / rollback.
     # ------------------------------------------------------------------
 
+    def _gallery_height_for_count(self, count: int) -> int:
+        rows = max(1, (max(1, count) + self._GALLERY_COLUMNS - 1) // self._GALLERY_COLUMNS)
+        return rows * _CARD_H + (rows - 1) * self._GALLERY_GAP
+
     def _rebuild_gallery(self):
         while self._gallery_layout.count():
             item = self._gallery_layout.takeAt(0)
@@ -849,6 +935,17 @@ class VoiceConfigPage(SiPage):
                 pass
         self._sync_video_paths_from_library()
         records = self._avatar_library.list()
+        gallery_height = self._gallery_height_for_count(MAX_AVATAR_RECORDS)
+        self._gallery_inner.setFixedHeight(gallery_height)
+        if hasattr(self, "_gallery_stream_row"):
+            self._gallery_stream_row.setFixedHeight(gallery_height)
+        self._gallery_inner.setMinimumWidth(
+            self._GALLERY_COLUMNS * _CARD_W + (self._GALLERY_COLUMNS - 1) * self._GALLERY_GAP
+        )
+        for col in range(self._GALLERY_COLUMNS):
+            self._gallery_layout.setColumnMinimumWidth(col, _CARD_W)
+
+        next_slot = 0
         for i, record in enumerate(records):
             path = record.video_path_for_pipeline()
             pixmap = self._load_thumbnail(path)
@@ -864,12 +961,22 @@ class VoiceConfigPage(SiPage):
             card.clicked.connect(self._on_thumb_clicked)
             card.remove_requested.connect(self._on_thumb_remove)
             card.set_selected(i == self._selected_index)
-            self._gallery_layout.addWidget(card)
+            self._gallery_layout.addWidget(
+                card,
+                next_slot // self._GALLERY_COLUMNS,
+                next_slot % self._GALLERY_COLUMNS,
+                Qt.AlignLeft | Qt.AlignTop,
+            )
+            next_slot += 1
         if len(records) < MAX_AVATAR_RECORDS:
             add_card = _AddCard(self._gallery_inner)
             add_card.clicked.connect(self._on_add_video)
-            self._gallery_layout.addWidget(add_card)
-        self._gallery_layout.addStretch(1)  # push cards to the left
+            self._gallery_layout.addWidget(
+                add_card,
+                next_slot // self._GALLERY_COLUMNS,
+                next_slot % self._GALLERY_COLUMNS,
+                Qt.AlignLeft | Qt.AlignTop,
+            )
 
     def _load_thumbnail(self, video_path: str) -> QPixmap | None:
         from pathlib import Path
@@ -902,7 +1009,7 @@ class VoiceConfigPage(SiPage):
             if record.status != STATUS_READY:
                 self._avatar_preprocessor.enqueue(record.id, priority=True)
         self._selected_index = index
-        for i in range(self._gallery_layout.count() - 1):
+        for i in range(self._gallery_layout.count()):
             item = self._gallery_layout.itemAt(i)
             if item and item.widget() and isinstance(item.widget(), _VideoThumbCard):
                 item.widget().set_selected(item.widget().index == index)

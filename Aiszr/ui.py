@@ -487,8 +487,8 @@ class CaptureWorker(QObject):
     live_capture_state_changed = pyqtSignal(str, str)
     digital_human_state_changed = pyqtSignal(object)
     # Keyword auto-reply (Phase 10 第二批) — emit on 命中且通过冷却/速率限制
-    # args: (keyword, reply_text, nickname, hit_count_after, injected)
-    keyword_reply_fired = pyqtSignal(str, str, str, int, bool)
+    # args: (keyword, reply_text, nickname, injected)
+    keyword_reply_fired = pyqtSignal(str, str, str, bool)
 
     def __init__(self):
         super().__init__()
@@ -526,9 +526,9 @@ class CaptureWorker(QObject):
         self._keyword_auto_reply_enabled = False
         self._keyword_global_cooldown_sec = 30
         self._keyword_rate_limit_per_min = 20
+        self._keyword_voice_provider = "local_voice"
         self._keyword_last_hit: dict[str, float] = {}
         self._keyword_hit_log: collections.deque = collections.deque()
-        self._keyword_hit_count: dict[str, int] = {}
 
     @pyqtSlot()
     def run(self):
@@ -1155,8 +1155,6 @@ class CaptureWorker(QObject):
                     if len(self._keyword_hit_log) < self._keyword_rate_limit_per_min:
                         self._keyword_last_hit[rule.keyword] = now
                         self._keyword_hit_log.append(now)
-                        count = self._keyword_hit_count.get(rule.keyword, 0) + 1
-                        self._keyword_hit_count[rule.keyword] = count
                         nick = str(msg.get("nickname", ""))
                         # Dispatch asynchronously; dispatch keeps WeChat text injection gated.
                         asyncio.create_task(
@@ -1164,7 +1162,6 @@ class CaptureWorker(QObject):
                                 rule.keyword,
                                 rule.reply,
                                 nick,
-                                count,
                                 generate_voice=bool(rule.generate_voice),
                             )
                         )
@@ -1241,7 +1238,11 @@ class CaptureWorker(QObject):
             return False
 
         try:
-            result = await self._voice_manager.synthesize_role_to_file(text, "anchor")
+            result = await self._voice_manager.synthesize_role_to_file(
+                text,
+                "anchor",
+                provider_name=self._keyword_voice_provider,
+            )
         except Exception as e:
             logger.warning("Keyword voice insertion synthesis error: {}", e)
             return False
@@ -1272,19 +1273,31 @@ class CaptureWorker(QObject):
         keyword: str,
         reply: str,
         nickname: str,
-        count: int,
         generate_voice: bool = False,
     ):
+        from keyword_rewriter import expand_keyword_reply_template
+
+        resolved_reply = expand_keyword_reply_template(reply)
         if generate_voice:
-            asyncio.create_task(self._enqueue_keyword_voice_insertion(reply))
+            asyncio.create_task(self._enqueue_keyword_voice_insertion(resolved_reply))
         injected = False
-        if self._wechat is not None:
+        if not generate_voice and self._wechat is not None:
             try:
-                injected = await self._wechat.send_comment(reply)
+                injected = await self._wechat.send_comment(
+                    self._format_keyword_text_reply(resolved_reply, nickname)
+                )
             except Exception as e:
                 logger.warning(f"Keyword: 注入异常 {e}")
                 injected = False
-        self.keyword_reply_fired.emit(keyword, reply, nickname, count, injected)
+        self.keyword_reply_fired.emit(keyword, resolved_reply, nickname, injected)
+
+    @staticmethod
+    def _format_keyword_text_reply(reply: str, nickname: str) -> str:
+        text = str(reply or "").strip()
+        nick = _normalize_display_nickname(nickname)
+        if not nick or not text or text.startswith("@"):
+            return text
+        return f"@{nick} {text}"
 
     def set_keyword_reply_config(
         self,
@@ -1293,12 +1306,17 @@ class CaptureWorker(QObject):
         active_template: str = "",
         global_cooldown_sec: int = 30,
         rate_limit_per_min: int = 20,
+        voice_provider: str = "local_voice",
     ):
         from keyword_engine import KeywordEngine
 
         self._keyword_auto_reply_enabled = bool(enabled)
         self._keyword_global_cooldown_sec = max(0, int(global_cooldown_sec))
         self._keyword_rate_limit_per_min = max(1, int(rate_limit_per_min))
+        voice_provider = str(voice_provider or "local_voice").strip()
+        self._keyword_voice_provider = (
+            voice_provider if voice_provider in VOICE_PROVIDERS else "local_voice"
+        )
         if self._keyword_engine is None:
             self._keyword_engine = KeywordEngine()
         self._keyword_engine.load_templates({"keyword_templates": templates or {}})
@@ -2123,6 +2141,7 @@ class AiszrApp(SiliconApplication):
         kw_enabled = bool(settings.get("keyword_auto_reply_enabled", False))
         kw_cooldown = int(settings.get("keyword_auto_reply_global_cooldown_sec", 30))
         kw_rate = int(settings.get("keyword_auto_reply_rate_limit_per_min", 20))
+        kw_voice_provider = str(settings.get("keyword_voice_provider") or "local_voice")
         kw_templates = settings.get("keyword_templates", {}) or {}
         active_tmpl = self._keyword_reply_page.get_active_template_name()
         self._worker.set_keyword_reply_config(
@@ -2131,9 +2150,11 @@ class AiszrApp(SiliconApplication):
             active_template=active_tmpl,
             global_cooldown_sec=kw_cooldown,
             rate_limit_per_min=kw_rate,
+            voice_provider=kw_voice_provider,
         )
         self._keyword_reply_page.set_auto_reply_checked(kw_enabled)
         self._keyword_reply_page.set_related_settings(kw_cooldown, kw_rate)
+        self._keyword_reply_page.set_keyword_voice_provider(kw_voice_provider)
         self._home_page.set_keyword_auto_reply_checked(kw_enabled)
         self._home_page.set_keyword_related_settings(kw_cooldown, kw_rate)
         self._home_page.refresh_keyword_card(active_tmpl)
@@ -2169,15 +2190,11 @@ class AiszrApp(SiliconApplication):
     def _style_voice_api_dialog(self):
         self._voice_api_dialog._apply_theme_styles()
 
-    def _on_keyword_reply_fired(self, keyword: str, reply: str, nickname: str, count: int, injected: bool):
+    def _on_keyword_reply_fired(self, keyword: str, reply: str, nickname: str, injected: bool):
         status = "✓" if injected else "✗未注入"
         line = f"💬 命中『{keyword}』→ 回复『{reply}』 {status}"
         try:
             self._home_page.append_activity(line)
-        except Exception:
-            pass
-        try:
-            self._keyword_reply_page.on_rule_hit(keyword, count)
         except Exception:
             pass
 
@@ -2197,6 +2214,7 @@ class AiszrApp(SiliconApplication):
             active_template=self._keyword_reply_page.get_active_template_name(),
             global_cooldown_sec=int(data.get("keyword_auto_reply_global_cooldown_sec", 30)),
             rate_limit_per_min=int(data.get("keyword_auto_reply_rate_limit_per_min", 20)),
+            voice_provider=str(data.get("keyword_voice_provider") or "local_voice"),
         )
 
     def _refresh_home_keyword_card(self):

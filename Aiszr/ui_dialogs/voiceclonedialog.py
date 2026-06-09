@@ -360,9 +360,15 @@ class VoiceCloneDialog(QDialog):
         voice = self._voice_settings_state.find_voice(voice_id_or_error)
         if voice:
             voice.clone_status = "ready"
-            voice.clone_voice_id = results.get("model_dir", "")
+            voice.clone_voice_id = results.get("ref_audio", "")
             voice.trained_model_dir = results.get("model_dir", "")
             voice.last_error = ""
+            # 用训练参考音频对应的 ASR 文本更新 prompt_text/prompt_lang
+            local_api = self._voice_settings_state.api.get("local_voice")
+            prompt_text = results.get("prompt_text", "")
+            if prompt_text and local_api:
+                local_api.prompt_text = prompt_text
+                local_api.prompt_lang = results.get("prompt_lang", "zh") or "zh"
             data = _load_settings()
             data["voice"] = self._voice_settings_state.to_dict()
             _save_settings(data)
