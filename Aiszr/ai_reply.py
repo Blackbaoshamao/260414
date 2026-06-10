@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
+from live_control_config import LiveControlTemplate, TONE_STYLE_LABELS
+
 
 USER_COOLDOWN_SEC = 60
 LLM_MAX_TOKENS = 100
@@ -94,6 +96,48 @@ def _section(title: str, content: str) -> str:
 
 def _default_if_missing(value: str | None, default: str) -> str:
     return default if value is None else value
+
+
+def build_live_control_system_prompt(
+    template: LiveControlTemplate | dict | None = None,
+    reply_char_limit: int = 80,
+    tone_style: str = "natural",
+) -> str:
+    """Build the strict live-room copilot prompt used by DeepSeek."""
+    if isinstance(template, dict):
+        template = LiveControlTemplate.from_dict(template)
+    if template is None:
+        template = LiveControlTemplate()
+    try:
+        limit = int(reply_char_limit)
+    except (TypeError, ValueError):
+        limit = 80
+    limit = max(20, min(limit, 500))
+    tone = TONE_STYLE_LABELS.get(str(tone_style or ""), TONE_STYLE_LABELS["natural"])
+
+    def block(title: str, content: str) -> str:
+        content = str(content or "").strip()
+        return f"### {title}\n{content}" if content else f"### {title}\n未配置"
+
+    return "\n\n".join(
+        [
+            "你是直播间 AI 场控助播，只根据本场直播设定和观众发言生成一条可以直接发送的中文回复。",
+            "程序负责判断是否回复、频率冷却、是否 @ 用户、是否语音播报；你只负责生成回复正文，不要输出决策过程。",
+            (
+                f"硬性规则：每条回复不超过 {limit} 个中文字符；不要编造价格、优惠、库存、功效、赠品、运费、发货时效或售后承诺；"
+                "未配置或不确定的信息只能保守回答；不要跑题；不要输出与直播无关内容；不要自行添加 @。"
+            ),
+            "表达要求：真实、克制、像真人助播；不要每次使用同一句开头；根据用户是否第一次出现、之前问过什么和当前直播设定来回复。",
+            f"当前回复语气风格：{tone}",
+            block("本场直播商品信息", template.product_info),
+            block("主播/助播人设", template.anchor_persona),
+            block("售后政策", template.after_sales_policy),
+            block("禁止承诺内容", template.forbidden_commitments),
+            block("回复边界", template.reply_boundaries),
+            block("平台规则", template.platform_rules),
+            block("常见问题说明", template.faq),
+        ]
+    )
 
 
 def build_managed_system_prompt(
@@ -197,6 +241,12 @@ class AIConfig:
     reply_interval: int = 30
     max_tokens: int = LLM_MAX_TOKENS
     temperature: float = LLM_TEMPERATURE
+    reply_char_limit: int = 80
+    user_cooldown_sec: int = USER_COOLDOWN_SEC
+    tone_style: str = "natural"
+    mention_user: bool = True
+    voice_reply_enabled: bool = False
+    live_control_template: LiveControlTemplate | None = None
     public_memory_enabled: bool = True
     blocked_words: list = field(default_factory=list)
 
@@ -206,6 +256,10 @@ class ReplyResult:
     target_user: str
     target_msg: str
     reply: str
+    platform: str = ""
+    user_id: str = ""
+    use_voice: bool = False
+    mention_user: bool = True
 
 
 class DeepSeekClient:
@@ -337,6 +391,50 @@ class RuleBasedFallback:
         return None
 
 
+def _extract_memory_note(message: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return ""
+    markers = (
+        "吗", "么", "？", "?", "喜欢", "想要", "要", "不要", "偏好",
+        "售后", "发货", "物流", "价格", "优惠", "尺码", "颜色",
+    )
+    if any(marker in text for marker in markers):
+        return text[:120]
+    return ""
+
+
+def _infer_explained_topic(message: str) -> str:
+    text = str(message or "")
+    topic_keywords = (
+        ("售后", ("售后", "退", "换", "赔", "坏了")),
+        ("物流", ("物流", "快递", "发货", "几天", "到货", "包邮")),
+        ("价格", ("价格", "多少钱", "几米", "便宜", "优惠")),
+        ("商品", ("尺寸", "尺码", "颜色", "材质", "重量", "规格")),
+    )
+    for topic, keywords in topic_keywords:
+        if any(keyword in text for keyword in keywords):
+            return topic
+    return ""
+
+
+def _clean_generated_reply(reply: str, limit: int) -> str:
+    text = str(reply or "").strip()
+    text = text.strip("` \n\r\t")
+    if text.startswith("回复："):
+        text = text[3:].strip()
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 80
+    limit = max(20, min(limit, 500))
+    if len(text) > limit:
+        text = text[:limit].rstrip("，,。.!！?？；;、 ")
+        if text:
+            text += "。"
+    return text
+
+
 class AIReplyEngine:
     """Orchestrates AI reply with throttling and fallback."""
 
@@ -349,12 +447,27 @@ class AIReplyEngine:
         self._conversation_history: list[dict] = []
         self._max_history = 4
         self._pending_message: dict | None = None
+        self._pending_message_memory = None
         self._pending_timer: asyncio.Task | None = None
         self._reply_lock = asyncio.Lock()
         self._memory = None
 
     def set_memory(self, memory):
         self._memory = memory
+
+    def clear_memory(self):
+        if self._memory and hasattr(self._memory, "clear"):
+            self._memory.clear()
+
+    @staticmethod
+    def _message_platform(msg: dict) -> str:
+        return str(msg.get("source") or msg.get("platform") or "unknown")
+
+    @classmethod
+    def _cooldown_user_key(cls, msg: dict) -> str:
+        platform = cls._message_platform(msg)
+        identity = str(msg.get("user_id") or msg.get("nickname") or "")
+        return f"{platform}:{identity}"
 
     def _should_reply(self, msg: dict) -> bool:
         if not self.config.auto_reply:
@@ -368,11 +481,56 @@ class AIReplyEngine:
         now = time.time()
         if now - self._last_reply_time < self.config.reply_interval:
             return False
-        user_id = msg.get("user_id", "")
-        last = self._user_cooldowns.get(user_id, 0)
-        if now - last < USER_COOLDOWN_SEC:
+        user_key = self._cooldown_user_key(msg)
+        legacy_key = str(msg.get("user_id", ""))
+        last = max(self._user_cooldowns.get(user_key, 0), self._user_cooldowns.get(legacy_key, 0))
+        user_cooldown = max(0, int(self.config.user_cooldown_sec))
+        if now - last < user_cooldown:
             return False
         return True
+
+    def _record_live_memory(self, msg: dict):
+        if not self._memory or not hasattr(self._memory, "record_message"):
+            return None
+        try:
+            return self._memory.record_message(
+                username=str(msg.get("nickname", "")),
+                platform=self._message_platform(msg),
+                message=str(msg.get("content", "")),
+                user_id=str(msg.get("user_id", "")),
+            )
+        except Exception as exc:
+            logger.debug("Live memory record skipped: {}", exc)
+            return None
+
+    def _append_memory_prompt(self, system_content: str, memory) -> str:
+        if self._memory and hasattr(self._memory, "format_for_prompt"):
+            try:
+                memory_text = self._memory.format_for_prompt(memory)
+            except Exception:
+                memory_text = ""
+            if memory_text:
+                return f"{system_content}\n\n{memory_text}"
+        return system_content
+
+    def _update_live_memory_after_reply(self, msg: dict, reply: str, memory=None):
+        if not self._memory or not hasattr(self._memory, "update_reply"):
+            return False
+        try:
+            current = memory
+            self._memory.update_reply(
+                username=str(msg.get("nickname", "")),
+                platform=self._message_platform(msg),
+                reply=reply,
+                user_id=str(msg.get("user_id", "")),
+                welcomed=True if getattr(current, "is_first_message", False) else None,
+                preference_note=_extract_memory_note(str(msg.get("content", ""))),
+                explained_topic=_infer_explained_topic(str(msg.get("content", ""))),
+            )
+            return True
+        except Exception as exc:
+            logger.debug("Live memory update skipped: {}", exc)
+            return False
 
     def _emit_status(self, payload: dict):
         callback = getattr(self, "_on_status", None)
@@ -453,18 +611,22 @@ class AIReplyEngine:
     async def process_message(self, msg: dict) -> ReplyResult | None:
         if msg.get("type") != "chat":
             return None
+        message_memory = self._record_live_memory(msg)
         if self._reply_lock.locked():
             self._pending_message = msg
+            self._pending_message_memory = message_memory
             self.publish_status()
             return None
         if not self._should_reply(msg):
             self._pending_message = msg
+            self._pending_message_memory = message_memory
             self._schedule_pending()
             self.publish_status()
             return None
 
         self._pending_message = None
-        return await self._do_reply(msg)
+        self._pending_message_memory = None
+        return await self._do_reply(msg, memory=message_memory)
 
     def _schedule_pending(self):
         if self._pending_timer and not self._pending_timer.done():
@@ -479,9 +641,11 @@ class AIReplyEngine:
                 self.publish_status()
                 return
             msg = self._pending_message
+            message_memory = self._pending_message_memory
             self._pending_message = None
+            self._pending_message_memory = None
             if self._should_reply(msg):
-                result = await self._do_reply(msg)
+                result = await self._do_reply(msg, memory=message_memory)
                 if result:
                     await self._deliver_reply(result)
             else:
@@ -492,11 +656,13 @@ class AIReplyEngine:
         except RuntimeError:
             pass
 
-    async def _do_reply(self, msg: dict) -> ReplyResult | None:
+    async def _do_reply(self, msg: dict, memory=None) -> ReplyResult | None:
         async with self._reply_lock:
             now = time.time()
             self._last_reply_time = now
-            self._user_cooldowns[msg.get("user_id", "")] = now
+            self._user_cooldowns[self._cooldown_user_key(msg)] = now
+            if msg.get("user_id"):
+                self._user_cooldowns[str(msg.get("user_id", ""))] = now
             self._emit_status(
                 {
                     "state": "generating",
@@ -510,8 +676,15 @@ class AIReplyEngine:
             target_user = msg.get("nickname", "")
             target_msg = msg.get("content", "")
             target_uid = msg.get("user_id", "")
+            platform = self._message_platform(msg)
 
-            reply = await self._get_llm_reply(target_user, target_msg, target_uid)
+            reply = await self._get_llm_reply(
+                target_user,
+                target_msg,
+                target_uid,
+                platform=platform,
+                memory=memory,
+            )
 
             if reply is None:
                 reply = self._fallback.reply(target_user, target_msg)
@@ -521,10 +694,12 @@ class AIReplyEngine:
                 return None
 
             if self._memory and self.config.public_memory_enabled:
+                handled = self._update_live_memory_after_reply(msg, reply, memory=memory)
                 try:
-                    await self._memory.save_interaction(
-                        target_user, target_uid, target_msg, reply,
-                    )
+                    if not handled and hasattr(self._memory, "save_interaction"):
+                        await self._memory.save_interaction(
+                            target_user, target_uid, target_msg, reply,
+                        )
                 except Exception:
                     pass
 
@@ -534,14 +709,26 @@ class AIReplyEngine:
                 target_user=target_user,
                 target_msg=target_msg,
                 reply=reply,
+                platform=platform,
+                user_id=str(target_uid or ""),
+                use_voice=bool(self.config.voice_reply_enabled),
+                mention_user=bool(self.config.mention_user),
             )
 
-    async def _get_llm_reply(self, user: str, msg: str, user_id: str = "") -> str | None:
+    async def _get_llm_reply(
+        self,
+        user: str,
+        msg: str,
+        user_id: str = "",
+        platform: str = "",
+        memory=None,
+    ) -> str | None:
         if not self.config.api_key:
             return None
 
         # Build context-aware user message
-        user_content = f"[{user}]: {msg}"
+        platform = str(platform or "unknown")
+        user_content = f"[平台:{platform}][用户:{user}]: {msg}"
         if is_short_message(msg):
             intent = guess_intent(msg)
             user_content += f"\n[系统提示：这是一条短弹幕，推测意图：{intent}]"
@@ -555,13 +742,21 @@ class AIReplyEngine:
             self._conversation_history = self._conversation_history[-self._max_history:]
 
         system_content = self.config.system_prompt
+        if not system_content and self.config.live_control_template is not None:
+            system_content = build_live_control_system_prompt(
+                self.config.live_control_template,
+                reply_char_limit=self.config.reply_char_limit,
+                tone_style=self.config.tone_style,
+            )
+        system_content = self._append_memory_prompt(system_content, memory)
 
         if self._memory and self.config.public_memory_enabled:
             try:
-                history = await self._memory.load_recent_history(user, user_id)
-                history_text = self._memory.format_history_for_prompt(history)
-                if history_text:
-                    system_content += f"\n\n{history_text}"
+                if hasattr(self._memory, "load_recent_history"):
+                    history = await self._memory.load_recent_history(user, user_id)
+                    history_text = self._memory.format_history_for_prompt(history)
+                    if history_text:
+                        system_content += f"\n\n{history_text}"
             except Exception:
                 pass
 
@@ -571,6 +766,7 @@ class AIReplyEngine:
 
         reply = await self._client.chat(messages)
         if reply:
+            reply = _clean_generated_reply(reply, self.config.reply_char_limit)
             self._conversation_history.append({
                 "role": "assistant",
                 "content": reply,

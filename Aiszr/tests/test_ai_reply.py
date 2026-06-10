@@ -18,6 +18,7 @@ def _msg(content="hello", nickname="user1", user_id="u1", msg_type="chat"):
         "nickname": nickname,
         "user_id": user_id,
         "type": msg_type,
+        "source": "wechat",
     }
 
 

@@ -197,7 +197,7 @@ class DigitalHumanPage(SiPage):
         settings = _load_settings()
         api_key = str(settings.get("api_key", "")).strip()
         if not api_key:
-            self._gen_status_label.setText("请先在 AI 配置页面设置 API Key")
+            self._gen_status_label.setText("请先在 AI 助播页面设置 API Key")
             return
         self._gen_status_label.setText("正在生成...")
         self._generate_script_btn.setEnabled(False)

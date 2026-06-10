@@ -51,6 +51,7 @@ def _make_message(msg_item: dict) -> dict:
 class WeChatCapture:
     def __init__(self, on_message):
         self._on_message = on_message
+        self._pw = None
         self._browser = None
         self._context = None
         self._page = None
@@ -59,8 +60,8 @@ class WeChatCapture:
 
     async def start(self) -> str:
         self._running = True
-        pw = await async_playwright().start()
-        self._context = await pw.chromium.launch_persistent_context(
+        self._pw = await async_playwright().start()
+        self._context = await self._pw.chromium.launch_persistent_context(
             user_data_dir=str(DATA_DIR.resolve()),
             headless=False,
             channel="msedge",
@@ -89,14 +90,20 @@ class WeChatCapture:
         return self._page.url
 
     async def _on_response(self, resp):
+        if not self._running:
+            return
         if MSG_ENDPOINT not in resp.url or resp.status != 200:
             return
         try:
             body = await resp.body()
+            if not self._running:
+                return
             data = json.loads(body.decode("utf-8"))
             inner = json.loads(data.get("data", {}).get("respJsonStr", "{}"))
             msgs = inner.get("msg_list", [])
             for item in msgs:
+                if not self._running:
+                    return
                 seq = item.get("seq", "")
                 if seq and seq in self._seen_seqs:
                     continue
@@ -144,5 +151,11 @@ class WeChatCapture:
             except Exception:
                 pass
             self._context = None
+        if self._pw:
+            try:
+                await self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
         self._page = None
         self._seen_seqs.clear()

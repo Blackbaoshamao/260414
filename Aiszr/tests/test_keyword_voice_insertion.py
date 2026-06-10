@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from keyword_engine import KeywordRule, MatchResult
+from ai_reply import ReplyResult
 from voice_manager import VoiceActionResult
 
 
@@ -237,6 +238,209 @@ async def test_dispatch_keyword_reply_skips_voice_when_generate_voice_false(work
     )
 
     assert events == [("signal", ("deal", "keyword reply", "buyer", False))]
+
+
+def test_next_scheduled_script_rotates_in_order(worker):
+    worker.set_scheduled_script_config(
+        enabled=True,
+        scripts=["第一段", "第二段"],
+        interval_sec=30,
+        random_order=False,
+    )
+
+    assert worker._next_scheduled_script() == "第一段"
+    assert worker._next_scheduled_script() == "第二段"
+    assert worker._next_scheduled_script() == "第一段"
+
+
+async def test_dispatch_scheduled_script_sends_wechat_text_without_mention(worker):
+    events = []
+
+    class FakeWechat:
+        async def send_comment(self, text):
+            events.append(("comment", text))
+            return True
+
+    worker._wechat = FakeWechat()
+    worker.set_scheduled_script_config(
+        enabled=True,
+        scripts=["欢迎来到直播间"],
+        interval_sec=30,
+        voice_enabled=False,
+    )
+    worker.scheduled_script_fired.connect(
+        lambda *args: events.append(("signal", args))
+    )
+
+    delivered = await worker._dispatch_scheduled_script()
+
+    assert delivered is True
+    assert events == [
+        ("comment", "欢迎来到直播间"),
+        ("signal", ("欢迎来到直播间", True)),
+    ]
+
+
+async def test_dispatch_scheduled_script_inserts_random_space_when_enabled(worker, monkeypatch):
+    events = []
+
+    class FakeWechat:
+        async def send_comment(self, text):
+            events.append(("comment", text))
+            return True
+
+    monkeypatch.setattr("ui.random.choice", lambda _choices: 2)
+    worker._wechat = FakeWechat()
+    worker.set_scheduled_script_config(
+        enabled=True,
+        scripts=["欢迎来到直播间"],
+        interval_sec=30,
+        random_space_enabled=True,
+        voice_enabled=False,
+    )
+    worker.scheduled_script_fired.connect(
+        lambda *args: events.append(("signal", args))
+    )
+
+    delivered = await worker._dispatch_scheduled_script()
+
+    assert delivered is True
+    assert worker._scheduled_scripts == ["欢迎来到直播间"]
+    assert events == [
+        ("comment", "欢迎 来到直播间"),
+        ("signal", ("欢迎 来到直播间", True)),
+    ]
+
+
+async def test_dispatch_scheduled_script_voice_skips_wechat_text(worker):
+    events = []
+
+    class FakeWechat:
+        async def send_comment(self, text):
+            events.append(("comment", text))
+            return True
+
+    async def enqueue_voice(reply):
+        events.append(("voice", reply))
+        return True
+
+    worker._wechat = FakeWechat()
+    worker._enqueue_keyword_voice_insertion = enqueue_voice
+    worker.set_scheduled_script_config(
+        enabled=True,
+        scripts=["主播正在讲一号链接"],
+        interval_sec=30,
+        voice_enabled=True,
+    )
+    worker.scheduled_script_fired.connect(
+        lambda *args: events.append(("signal", args))
+    )
+
+    delivered = await worker._dispatch_scheduled_script()
+
+    assert delivered is True
+    assert events == [
+        ("voice", "主播正在讲一号链接"),
+        ("signal", ("主播正在讲一号链接", True)),
+    ]
+
+
+async def test_dispatch_scheduled_script_reports_not_delivered_without_channel(worker):
+    events = []
+    worker._wechat = None
+    worker.set_scheduled_script_config(
+        enabled=True,
+        scripts=["欢迎来到直播间"],
+        interval_sec=30,
+        voice_enabled=False,
+    )
+    worker.scheduled_script_fired.connect(
+        lambda *args: events.append(("signal", args))
+    )
+
+    delivered = await worker._dispatch_scheduled_script()
+
+    assert delivered is False
+    assert events == [("signal", ("欢迎来到直播间", False))]
+
+
+async def test_dispatch_ai_reply_sends_wechat_text_with_mention(worker):
+    events = []
+
+    class FakeWechat:
+        async def send_comment(self, text):
+            events.append(("comment", text))
+            return True
+
+    worker._wechat = FakeWechat()
+    worker.ai_reply_ready.connect(
+        lambda *args: events.append(("signal", args))
+    )
+
+    await worker._dispatch_ai_reply(
+        ReplyResult(
+            target_user="buyer",
+            target_msg="多少钱",
+            reply="看一号链接",
+            platform="wechat",
+            use_voice=False,
+            mention_user=False,
+        )
+    )
+
+    assert events == [
+        ("signal", ("buyer", "多少钱", "看一号链接")),
+        ("comment", "@buyer 看一号链接"),
+    ]
+
+
+async def test_dispatch_ai_reply_voice_does_not_send_wechat_text(worker):
+    events = []
+
+    class FakeWechat:
+        async def send_comment(self, text):
+            events.append(("comment", text))
+            return True
+
+    class FakeTtsWorker:
+        def enqueue(self, payload, *, interrupt=False):
+            events.append(("tts", payload["text"], interrupt))
+
+    worker._wechat = FakeWechat()
+    worker._tts_worker = FakeTtsWorker()
+    worker.ai_reply_ready.connect(
+        lambda *args: events.append(("signal", args))
+    )
+
+    await worker._dispatch_ai_reply(
+        ReplyResult(
+            target_user="buyer",
+            target_msg="多少钱",
+            reply="看一号链接",
+            platform="wechat",
+            use_voice=True,
+            mention_user=True,
+        )
+    )
+
+    assert events == [
+        ("signal", ("buyer", "多少钱", "看一号链接")),
+        ("tts", "看一号链接", False),
+    ]
+
+
+def test_clear_live_session_memory_delegates_to_ai_engine(worker):
+    calls = []
+
+    class FakeAIEngine:
+        def clear_memory(self):
+            calls.append("clear")
+
+    worker._ai_engine = FakeAIEngine()
+
+    worker._clear_live_session_memory()
+
+    assert calls == ["clear"]
 
 
 async def test_on_message_passes_rule_generate_voice_to_dispatch_for_any_platform(worker):
