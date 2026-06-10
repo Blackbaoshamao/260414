@@ -667,13 +667,13 @@ def _tune_font_quality(font: QFont) -> None:
 
 
 UI_FONT_FAMILIES = [
+    "Noto Sans SC",
     "SF Pro Text",
     "SF Pro Display",
-    "Segoe UI Variable Text",
-    "Segoe UI",
     "PingFang SC",
     "Microsoft YaHei UI",
-    "Noto Sans CJK SC",
+    "Segoe UI Variable Text",
+    "Segoe UI",
     "Arial",
 ]
 MONO_FONT_FAMILIES = [
@@ -706,13 +706,14 @@ def _make_ui_font(size: int, weight: int = QFont.Normal) -> QFont:
 
 
 # Sonoma type scale
-FONT_CAPTION   = _make_ui_font(9)
-FONT_BODY      = _make_ui_font(10)
-FONT_BODY_EMPH = _make_ui_font(10, QFont.DemiBold)
-FONT_HEADLINE  = _make_ui_font(12, QFont.DemiBold)
-FONT_TITLE_2   = _make_ui_font(16, QFont.DemiBold)
+_FONT_MEDIUM = getattr(QFont, "Medium", QFont.DemiBold)
+FONT_CAPTION   = _make_ui_font(10)
+FONT_BODY      = _make_ui_font(11)
+FONT_BODY_EMPH = _make_ui_font(11, _FONT_MEDIUM)
+FONT_HEADLINE  = _make_ui_font(13, _FONT_MEDIUM)
+FONT_TITLE_2   = _make_ui_font(17, QFont.DemiBold)
 FONT_TITLE_2.setLetterSpacing(QFont.PercentageSpacing, 100)
-FONT_TITLE_1   = _make_ui_font(21, QFont.Bold)
+FONT_TITLE_1   = _make_ui_font(22, QFont.DemiBold)
 FONT_TITLE_1.setLetterSpacing(QFont.PercentageSpacing, 100)
 
 # Backward-compat aliases — existing imports of FONT_UI / FONT_TITLE keep working
