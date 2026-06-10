@@ -661,16 +661,16 @@ def _tune_font_quality(font: QFont) -> None:
     font.setKerning(True)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     try:
-        font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
+        font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     except AttributeError:
         pass
 
 
 UI_FONT_FAMILIES = [
-    "Noto Sans SC",
+    "PingFang SC",
     "SF Pro Text",
     "SF Pro Display",
-    "PingFang SC",
+    "DengXian",
     "Microsoft YaHei UI",
     "Segoe UI Variable Text",
     "Segoe UI",
@@ -711,9 +711,9 @@ FONT_CAPTION   = _make_ui_font(10)
 FONT_BODY      = _make_ui_font(11)
 FONT_BODY_EMPH = _make_ui_font(11, _FONT_MEDIUM)
 FONT_HEADLINE  = _make_ui_font(13, _FONT_MEDIUM)
-FONT_TITLE_2   = _make_ui_font(17, QFont.DemiBold)
+FONT_TITLE_2   = _make_ui_font(17, _FONT_MEDIUM)
 FONT_TITLE_2.setLetterSpacing(QFont.PercentageSpacing, 100)
-FONT_TITLE_1   = _make_ui_font(22, QFont.DemiBold)
+FONT_TITLE_1   = _make_ui_font(22, _FONT_MEDIUM)
 FONT_TITLE_1.setLetterSpacing(QFont.PercentageSpacing, 100)
 
 # Backward-compat aliases — existing imports of FONT_UI / FONT_TITLE keep working
