@@ -661,7 +661,7 @@ def _tune_font_quality(font: QFont) -> None:
     font.setKerning(True)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     try:
-        font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
     except AttributeError:
         pass
 
@@ -670,10 +670,11 @@ UI_FONT_FAMILIES = [
     "PingFang SC",
     "SF Pro Text",
     "SF Pro Display",
-    "DengXian",
     "Microsoft YaHei UI",
+    "Noto Sans SC",
     "Segoe UI Variable Text",
     "Segoe UI",
+    "DengXian",
     "Arial",
 ]
 MONO_FONT_FAMILIES = [

@@ -207,8 +207,37 @@ async def startup():
     return pw, context
 
 
+def _enable_crisp_high_dpi() -> None:
+    """Ask Windows and Qt to render at native monitor DPI instead of bitmap scaling."""
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
+    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
+    if sys.platform != "win32":
+        return
+
+    try:
+        import ctypes
+        # Per-monitor v2 gives the sharpest result when moving between displays.
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        return
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
 def _run_desktop():
     """Launch Aiszr desktop application (PyQt5 + SiliconUI)."""
+    _enable_crisp_high_dpi()
     _install_qt_warning_filter()
 
     from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
@@ -230,8 +259,8 @@ def _run_desktop():
     app = QApplication(sys.argv)
     app.setApplicationName("Aiszr")
 
-    # Register bundled Inter TTFs (macOS Sonoma look). Missing fonts/ → no-op,
-    # the cascade below falls back to PingFang SC / 阿里巴巴 / YaHei.
+    # Register bundled UI fonts if present. Missing fonts/ -> no-op; the
+    # cascade below falls back to platform fonts.
     from ui_theme import UI_FONT_FAMILIES, register_app_fonts
     register_app_fonts()
 
@@ -253,7 +282,7 @@ def _run_desktop():
         pass  # Qt < 5.13 lacks setFamilies; single family + stylesheet cascade still works
     _ui_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     try:
-        _ui_font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+        _ui_font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
     except AttributeError:
         pass
     app.setFont(_ui_font)
