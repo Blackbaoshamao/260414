@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from ui_constants import _DEFAULT_MESSAGE_FILTERS
 from ui_constants import _MESSAGE_FILTER_OPTIONS
+from ui_constants import _normalize_message_filters
 from ui_settings import _load_settings
 from ui_settings import _save_settings
 from ui_theme import FONT_MONO
@@ -57,6 +58,7 @@ class LiveRoomPage(SiPage):
     connect_requested = pyqtSignal(str, str)
     live_capture_toggle_requested = pyqtSignal(bool, str)
     clear_session_requested = pyqtSignal()
+    message_filters_changed = pyqtSignal(dict)
 
     def __init__(self, worker: CaptureWorker, parent=None):
         super().__init__(parent)
@@ -69,7 +71,9 @@ class LiveRoomPage(SiPage):
         self._live_capture_message = "抓取未启用"
         self._connect_time = 0.0
         self._parse_failure_count = 0
-        self._message_filters = dict(_DEFAULT_MESSAGE_FILTERS)
+        self._message_filters = _normalize_message_filters(
+            _load_settings().get("message_filters")
+        )
         self._filter_checks: dict[str, QCheckBox] = {}
         container = QWidget()
         self._live_container = container
@@ -204,17 +208,21 @@ class LiveRoomPage(SiPage):
     def _active_message_types(self) -> set[str]:
         return {key for key, enabled in self._message_filters.items() if enabled}
 
+    def get_message_filters(self) -> dict[str, bool]:
+        return dict(self._message_filters)
+
     def _persist_message_filters(self):
         data = _load_settings()
         data["message_filters"] = dict(self._message_filters)
         _save_settings(data)
 
     def _on_filter_toggled(self, key: str, state: int):
-        self._message_filters[key] = bool(state)
+        self._message_filters[key] = state == Qt.Checked
         types = self._active_message_types()
         self._display_dy.set_allowed_types(types)
         self._display_wx.set_allowed_types(types)
         self._persist_message_filters()
+        self.message_filters_changed.emit(dict(self._message_filters))
 
     @pyqtSlot(dict)
     def _handle_danmaku_message(self, msg: dict):
@@ -375,4 +383,3 @@ class LiveRoomPage(SiPage):
 # ---------------------------------------------------------------------------
 # AIConfigPage — Gemini-style settings
 # ---------------------------------------------------------------------------
-

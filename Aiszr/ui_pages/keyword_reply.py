@@ -961,6 +961,12 @@ class KeywordReplyPage(SiPage):
         # 让 _on_tmpl_switch 跑（flush + rebuild），但不再 emit 给首页绕回来
         self._tmpl_combo.setCurrentText(name)
 
+    def reload_from_settings(self, active_template: str = ""):
+        self._load_from_settings()
+        if active_template:
+            self.set_active_template_name(active_template)
+        self._set_dirty(False)
+
     def set_auto_reply_checked(self, checked: bool):
         if hasattr(self, "_auto_reply_switch"):
             self._auto_reply_switch.blockSignals(True)

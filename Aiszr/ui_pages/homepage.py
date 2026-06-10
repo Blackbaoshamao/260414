@@ -19,6 +19,7 @@ from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QTextBrowser, QToolTip, QApplication, QDialog, QFrame,
+    QSizePolicy,
 )
 import ui_theme as theme
 from ui_components import MacCard, MacButton, MacComboBox, MacLineEdit
@@ -275,13 +276,18 @@ class HomePage(SiPage):
     quick_stop_requested = pyqtSignal()
     obs_status_check_requested = pyqtSignal(object)
     obs_settings_changed = pyqtSignal(object)
+    ai_assistant_reply_toggled = pyqtSignal(bool)
+    ai_assistant_voice_toggled = pyqtSignal(bool)
     keyword_auto_reply_toggled = pyqtSignal(bool)
+    keyword_voice_toggled = pyqtSignal(bool)
+    scheduled_scripts_toggled = pyqtSignal(bool)
+    scheduled_random_space_toggled = pyqtSignal(bool)
     keyword_template_switch_requested = pyqtSignal(str)
     keyword_related_settings_changed = pyqtSignal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPadding(12)
+        self.setPadding(8)
         self.setScrollMaximumWidth(1600)
         self._audio_devices: list[dict] = []
         self._selected_in_index: int = -1
@@ -292,16 +298,16 @@ class HomePage(SiPage):
         root = QWidget(self)
         self._root = root
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(4, 4, 4, 4)
-        outer.setSpacing(theme.SPACING_SM)
+        outer.setContentsMargins(4, 0, 4, 4)
+        outer.setSpacing(6)
 
         # Hero greeting — Sonoma display title
         outer.addWidget(self._build_hero())
 
         grid = QGridLayout()
         grid.setSpacing(theme.SPACING_MD)
-        grid.setRowStretch(0, 5)
-        grid.setRowStretch(1, 1)
+        grid.setRowStretch(0, 7)
+        grid.setRowStretch(1, 2)
         grid.setColumnStretch(0, 2)
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(2, 1)
@@ -310,18 +316,18 @@ class HomePage(SiPage):
         self._monitor_slot = QVBoxLayout()
         grid.addLayout(self._monitor_slot, 0, 0, 1, 2)
 
-        # Right column: 快捷操作 + 音频设备 + 关键词回复
+        # Right column: 快捷操作 + 自动场控 + 关键词回复
         right_col = QVBoxLayout()
         right_col.setSpacing(theme.SPACING_MD)
         right_col.addWidget(self._build_quick_card(), stretch=3)
-        right_col.addWidget(self._build_audio_card(), stretch=2)
+        right_col.addWidget(self._build_scheduled_card(), stretch=2)
         right_col.addWidget(self._build_keyword_card(), stretch=5)
         grid.addLayout(right_col, 0, 2, 2, 1)
 
-        # Bottom row: OBS 联动 + 推流控制, split evenly inside the left span.
+        # Bottom row: 音频设备 + 推流控制, split evenly inside the left span.
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(theme.SPACING_MD)
-        bottom_row.addWidget(self._build_obs_card(), stretch=1)
+        bottom_row.addWidget(self._build_audio_card(), stretch=1)
         bottom_row.addWidget(self._build_stream_card(), stretch=1)
         grid.addLayout(bottom_row, 1, 0, 1, 2)
 
@@ -376,29 +382,29 @@ class HomePage(SiPage):
     def _build_hero(self) -> QWidget:
         """Lightweight brand header."""
         row = QWidget(self)
-        row.setFixedHeight(60)
+        row.setFixedHeight(48)
         ly = QHBoxLayout(row)
-        ly.setContentsMargins(8, 5, 8, 5)
+        ly.setContentsMargins(8, 2, 8, 2)
         ly.setSpacing(12)
 
         self._hero_accent = QFrame(row)
         self._hero_accent.setObjectName("HomeHeroAccent")
-        self._hero_accent.setFixedSize(4, 40)
+        self._hero_accent.setFixedSize(4, 34)
         ly.addWidget(self._hero_accent)
 
         title_block = QWidget(row)
-        title_block.setFixedHeight(48)
+        title_block.setFixedHeight(42)
         title_block.setStyleSheet("background: transparent;")
         title_layout = QVBoxLayout(title_block)
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(0)
         self._hero_title = QLabel("Aiszr · AI 直播助手")
         self._hero_title.setFont(theme.FONT_TITLE_1)
-        self._hero_title.setMinimumHeight(30)
+        self._hero_title.setMinimumHeight(26)
         title_layout.addWidget(self._hero_title)
         self._hero_subtitle = QLabel("实时监控、推流控制、关键词回复")
         self._hero_subtitle.setFont(theme.FONT_BODY)
-        self._hero_subtitle.setFixedHeight(18)
+        self._hero_subtitle.setFixedHeight(16)
         title_layout.addWidget(self._hero_subtitle)
         ly.addWidget(title_block)
         ly.addStretch(1)
@@ -464,6 +470,108 @@ class HomePage(SiPage):
         body.addLayout(row)
         return card
 
+    # ── Scheduled live-control card ───────────────────────
+
+    def _build_scheduled_card(self) -> MacCard:
+        card = MacCard(self, title="自动场控")
+        body = card.body()
+        body.setSpacing(8)
+
+        self._scheduled_template_label = QLabel("模板：未设置")
+        self._scheduled_template_label.setFont(theme.FONT_BODY)
+        self._scheduled_template_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_PRI}; border: none; background: transparent;"
+        )
+        body.addWidget(self._scheduled_template_label)
+
+        self._scheduled_summary_label = QLabel("话术：0 条 · 未启用")
+        self._scheduled_summary_label.setWordWrap(True)
+        self._scheduled_summary_label.setFont(theme.FONT_CAPTION)
+        self._scheduled_summary_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_SEC}; border: none; background: transparent;"
+        )
+        body.addWidget(self._scheduled_summary_label)
+
+        row = QHBoxLayout()
+        row.setSpacing(theme.SPACING_SM)
+        self._scheduled_toggle_btn = MacButton("开启自动场控", variant="pill")
+        self._scheduled_toggle_btn.setCheckable(True)
+        self._scheduled_toggle_btn.setFixedHeight(30)
+        self._scheduled_toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._scheduled_toggle_btn.toggled.connect(self._on_scheduled_toggled)
+        row.addWidget(self._scheduled_toggle_btn, stretch=1)
+
+        self._scheduled_random_space_btn = MacButton("开启随机空格", variant="pill")
+        self._scheduled_random_space_btn.setCheckable(True)
+        self._scheduled_random_space_btn.setFixedHeight(30)
+        self._scheduled_random_space_btn.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        self._scheduled_random_space_btn.toggled.connect(
+            self._on_scheduled_random_space_toggled
+        )
+        row.addWidget(self._scheduled_random_space_btn, stretch=1)
+        body.addLayout(row)
+        self.refresh_scheduled_card()
+        return card
+
+    def refresh_scheduled_card(self, settings: object | None = None):
+        if not hasattr(self, "_scheduled_summary_label"):
+            return
+        if settings is None:
+            from live_control_config import LiveControlSettings
+
+            settings = LiveControlSettings.from_settings(_load_settings())
+        template = settings.get_active_template()
+        scripts = list(getattr(template, "scheduled_scripts", []) or [])
+        enabled = bool(getattr(settings, "scheduled_scripts_enabled", False))
+        random_space = bool(getattr(settings, "scheduled_scripts_random_space_enabled", False))
+        self._scheduled_template_label.setText(f"模板：{template.name}")
+        self._scheduled_summary_label.setText(
+            f"话术：{len(scripts)} 条 · {'自动已开' if enabled else '自动未开'} · "
+            f"{'空格已开' if random_space else '空格未开'}"
+        )
+        self.set_scheduled_scripts_checked(enabled)
+        self.set_scheduled_random_space_checked(random_space)
+
+    def _on_scheduled_toggled(self, checked: bool):
+        self._set_toggle_text(
+            self._scheduled_toggle_btn,
+            bool(checked),
+            "开启自动场控",
+            "关闭自动场控",
+        )
+        self.scheduled_scripts_toggled.emit(bool(checked))
+
+    def _on_scheduled_random_space_toggled(self, checked: bool):
+        self._set_toggle_text(
+            self._scheduled_random_space_btn,
+            bool(checked),
+            "开启随机空格",
+            "关闭随机空格",
+        )
+        self.scheduled_random_space_toggled.emit(bool(checked))
+
+    def set_scheduled_scripts_checked(self, checked: bool):
+        if not hasattr(self, "_scheduled_toggle_btn"):
+            return
+        self._set_checkable_button(
+            self._scheduled_toggle_btn,
+            bool(checked),
+            "开启自动场控",
+            "关闭自动场控",
+        )
+
+    def set_scheduled_random_space_checked(self, checked: bool):
+        if not hasattr(self, "_scheduled_random_space_btn"):
+            return
+        self._set_checkable_button(
+            self._scheduled_random_space_btn,
+            bool(checked),
+            "开启随机空格",
+            "关闭随机空格",
+        )
+
     # ── Keyword reply card ────────────────────────────────
 
     def _build_keyword_card(self) -> MacCard:
@@ -472,6 +580,7 @@ class HomePage(SiPage):
         self._kw_combo = MacComboBox()
         self._kw_combo.currentTextChanged.connect(self._on_kw_template_changed)
         body.addWidget(self._kw_combo)
+
         self._kw_preview = QTextBrowser()
         self._kw_preview.setMinimumHeight(80)
         body.addWidget(self._kw_preview)
@@ -528,6 +637,11 @@ class HomePage(SiPage):
             self._kw_rate_edit.setText(str(int(rate_per_min)))
             self._kw_rate_edit.blockSignals(False)
 
+    def get_keyword_template_name(self) -> str:
+        if not hasattr(self, "_kw_combo"):
+            return ""
+        return self._kw_combo.currentText()
+
     def _on_kw_template_changed(self, name: str):
         if not name:
             return
@@ -542,6 +656,7 @@ class HomePage(SiPage):
         rules = tmpl.get("rules") or []
         if not rules:
             self._kw_preview.setPlainText("（该模板下还没有规则）")
+            self.set_keyword_voice_checked(False)
             return
         lines = []
         for r in rules:
@@ -551,6 +666,13 @@ class HomePage(SiPage):
                 continue
             lines.append(f"{kw} → {reply}")
         self._kw_preview.setPlainText("\n".join(lines) if lines else "（该模板下还没有规则）")
+        self.set_keyword_voice_checked(self._keyword_template_voice_enabled(name))
+
+    def _keyword_template_voice_enabled(self, name: str) -> bool:
+        data = _load_settings()
+        tmpl = (data.get("keyword_templates") or {}).get(name) or {}
+        rules = [rule for rule in (tmpl.get("rules") or []) if (rule.get("keyword") or "").strip()]
+        return bool(rules) and all(bool(rule.get("generate_voice", False)) for rule in rules)
 
     def refresh_keyword_card(self, active_template: str = ""):
         if not hasattr(self, "_kw_combo"):
@@ -569,6 +691,7 @@ class HomePage(SiPage):
             self._render_kw_preview(current)
         else:
             self._kw_preview.setPlainText("（还没有模板）")
+            self.set_keyword_voice_checked(False)
 
     # ── OBS 联动 card (status + connect btn + rules btn + cooldown) ──
 
@@ -645,6 +768,8 @@ class HomePage(SiPage):
             self._cooldown_timer.start()
 
     def _tick_cooldown(self):
+        if not hasattr(self, "_obs_cooldown_label"):
+            return
         controller = getattr(self._worker, "_obs_controller", None) if self._worker else None
         if controller is None:
             self._obs_cooldown_label.setText("未启用")
@@ -660,24 +785,145 @@ class HomePage(SiPage):
     def _build_quick_card(self) -> MacCard:
         card = MacCard(self, title="快捷操作")
         body = card.body()
-        for text in ("静音 AI", "暂停 AI", "切换人设", "重置冷却"):
-            btn = MacButton(text, variant="pill")
-            btn.setCheckable(True)
-            body.addWidget(btn, stretch=1)
-        self._keyword_auto_reply_btn = MacButton("启用自动回复", variant="pill")
-        self._keyword_auto_reply_btn.setCheckable(True)
-        self._keyword_auto_reply_btn.toggled.connect(self._on_keyword_pill_toggled)
-        body.addWidget(self._keyword_auto_reply_btn, stretch=1)
+        body.setSpacing(8)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+
+        self._ai_reply_btn = self._make_toggle_button(
+            "开启AI助播回复",
+            "关闭AI助播回复",
+            self._on_ai_reply_toggled,
+        )
+        self._ai_voice_btn = self._make_toggle_button(
+            "开启AI助播语音",
+            "关闭AI助播语音",
+            self._on_ai_voice_toggled,
+        )
+        self._keyword_auto_reply_btn = self._make_toggle_button(
+            "开启关键词自动回复",
+            "关闭关键词回复",
+            self._on_keyword_pill_toggled,
+        )
+        self._keyword_voice_quick_btn = self._make_toggle_button(
+            "开启关键词语音",
+            "关闭关键词语音",
+            self._on_keyword_voice_toggled,
+        )
+
+        grid.addWidget(self._ai_reply_btn, 0, 0)
+        grid.addWidget(self._ai_voice_btn, 0, 1)
+        grid.addWidget(self._keyword_auto_reply_btn, 1, 0)
+        grid.addWidget(self._keyword_voice_quick_btn, 1, 1)
+        body.addLayout(grid)
+
+        obs_row = QHBoxLayout()
+        obs_row.setSpacing(theme.SPACING_SM)
+        self._obs_connect_btn = MacButton("连接OBS", variant="secondary")
+        self._obs_connect_btn.setFixedHeight(30)
+        self._obs_connect_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._obs_connect_btn.clicked.connect(self._on_obs_connect_clicked)
+        obs_row.addWidget(self._obs_connect_btn, stretch=1)
+        self._obs_status_dot = QLabel()
+        self._obs_status_dot.setFixedSize(10, 10)
+        obs_row.addWidget(self._obs_status_dot)
+        body.addLayout(obs_row)
+        self._set_obs_connected(False)
         return card
 
+    def _make_toggle_button(self, off_text: str, on_text: str, handler) -> MacButton:
+        btn = MacButton(off_text, variant="pill")
+        btn.setCheckable(True)
+        btn.setFixedHeight(30)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn._off_text = off_text
+        btn._on_text = on_text
+        btn.toggled.connect(handler)
+        return btn
+
+    def _set_toggle_text(self, btn: MacButton, checked: bool, off_text: str, on_text: str):
+        btn.setText(on_text if checked else off_text)
+
+    def _set_checkable_button(self, btn: MacButton, checked: bool, off_text: str, on_text: str):
+        btn.blockSignals(True)
+        try:
+            btn.setChecked(bool(checked))
+            self._set_toggle_text(btn, bool(checked), off_text, on_text)
+        finally:
+            btn.blockSignals(False)
+
+    def _on_ai_reply_toggled(self, checked: bool):
+        self._set_toggle_text(
+            self._ai_reply_btn,
+            bool(checked),
+            "开启AI助播回复",
+            "关闭AI助播回复",
+        )
+        self.ai_assistant_reply_toggled.emit(bool(checked))
+
+    def _on_ai_voice_toggled(self, checked: bool):
+        self._set_toggle_text(
+            self._ai_voice_btn,
+            bool(checked),
+            "开启AI助播语音",
+            "关闭AI助播语音",
+        )
+        self.ai_assistant_voice_toggled.emit(bool(checked))
+
     def _on_keyword_pill_toggled(self, checked: bool):
+        self._set_toggle_text(
+            self._keyword_auto_reply_btn,
+            bool(checked),
+            "开启关键词自动回复",
+            "关闭关键词回复",
+        )
         self.keyword_auto_reply_toggled.emit(bool(checked))
+
+    def _on_keyword_voice_toggled(self, checked: bool):
+        self.set_keyword_voice_checked(bool(checked))
+        self.keyword_voice_toggled.emit(bool(checked))
+
+    def set_ai_assistant_reply_checked(self, checked: bool):
+        if hasattr(self, "_ai_reply_btn"):
+            self._set_checkable_button(
+                self._ai_reply_btn,
+                bool(checked),
+                "开启AI助播回复",
+                "关闭AI助播回复",
+            )
+
+    def set_ai_assistant_voice_checked(self, checked: bool):
+        if hasattr(self, "_ai_voice_btn"):
+            self._set_checkable_button(
+                self._ai_voice_btn,
+                bool(checked),
+                "开启AI助播语音",
+                "关闭AI助播语音",
+            )
 
     def set_keyword_auto_reply_checked(self, checked: bool):
         if hasattr(self, "_keyword_auto_reply_btn"):
-            self._keyword_auto_reply_btn.blockSignals(True)
-            self._keyword_auto_reply_btn.setChecked(bool(checked))
-            self._keyword_auto_reply_btn.blockSignals(False)
+            self._set_checkable_button(
+                self._keyword_auto_reply_btn,
+                bool(checked),
+                "开启关键词自动回复",
+                "关闭关键词回复",
+            )
+
+    def set_keyword_voice_checked(self, checked: bool):
+        for attr in ("_keyword_voice_quick_btn",):
+            btn = getattr(self, attr, None)
+            if btn is None:
+                continue
+            self._set_checkable_button(
+                btn,
+                bool(checked),
+                "开启关键词语音",
+                "关闭关键词语音",
+            )
 
     # ── Audio device card ─────────────────────────────────
 
@@ -960,15 +1206,23 @@ class HomePage(SiPage):
         if not isinstance(payload, dict):
             return
         state = str(payload.get("state", "")).strip()
-        short = str(payload.get("short_text", "")).strip()
-        message = str(payload.get("message", "")).strip()
-        if state == "connected":
-            self._obs_connect_btn.setText("已连接")
-            self._obs_connect_btn.setEnabled(False)
-        else:
-            self._obs_connect_btn.setText("连接")
-            self._obs_connect_btn.setEnabled(True)
-        self._obs_status_label.setText(short or message or "未检测")
+        connected = state == "connected"
+        if hasattr(self, "_obs_connect_btn"):
+            self._obs_connect_btn.setText("OBS已连接" if connected else "连接OBS")
+            self._obs_connect_btn.setEnabled(not connected)
+        self._set_obs_connected(connected)
+
+    def _set_obs_connected(self, connected: bool):
+        if not hasattr(self, "_obs_status_dot"):
+            return
+        color = "#30D158" if connected else "#202124"
+        self._obs_status_dot.setStyleSheet(
+            "QLabel {"
+            f"background-color: {color};"
+            "border: none;"
+            "border-radius: 5px;"
+            "}"
+        )
 
     # ── Theme hot-switch ──────────────────────────────────
 

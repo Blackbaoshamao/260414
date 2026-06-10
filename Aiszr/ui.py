@@ -12,6 +12,7 @@ import contextlib
 import html as html_module
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -489,6 +490,8 @@ class CaptureWorker(QObject):
     # Keyword auto-reply (Phase 10 第二批) — emit on 命中且通过冷却/速率限制
     # args: (keyword, reply_text, nickname, injected)
     keyword_reply_fired = pyqtSignal(str, str, str, bool)
+    # Scheduled live-control scripts: args: (script_text, delivered)
+    scheduled_script_fired = pyqtSignal(str, bool)
 
     def __init__(self):
         super().__init__()
@@ -519,6 +522,9 @@ class CaptureWorker(QObject):
         self._last_fail_count = 0
         self._live_capture_enabled = False
         self._live_capture_state = "disabled"
+        self._message_filters = _normalize_message_filters(
+            _load_settings().get("message_filters")
+        )
 
         # Keyword auto-reply pipeline (Phase 10 第二批)
         # KeywordEngine 持有完整模板字典；只对 source=="wechat" 弹幕生效。
@@ -529,6 +535,14 @@ class CaptureWorker(QObject):
         self._keyword_voice_provider = "local_voice"
         self._keyword_last_hit: dict[str, float] = {}
         self._keyword_hit_log: collections.deque = collections.deque()
+        self._scheduled_scripts_enabled = False
+        self._scheduled_scripts: list[str] = []
+        self._scheduled_scripts_interval_sec = 120
+        self._scheduled_scripts_random_order = False
+        self._scheduled_scripts_random_space_enabled = False
+        self._scheduled_scripts_voice_enabled = False
+        self._scheduled_script_index = 0
+        self._scheduled_script_task: asyncio.Task | None = None
 
     @pyqtSlot()
     def run(self):
@@ -552,6 +566,7 @@ class CaptureWorker(QObject):
         await self._async_set_obs_action_settings(self._obs_action_settings)
         await self._async_set_voice_settings(self._voice_settings)
         self._emit_live_capture_state("disabled", "抓取未启用")
+        self._sync_scheduled_script_task()
         self._loop.create_task(self._delayed_obs_discovery())
 
     async def _delayed_obs_discovery(self):
@@ -591,6 +606,14 @@ class CaptureWorker(QObject):
         except Exception:
             pass
         self._pw = None
+        self._clear_live_session_memory()
+
+    def _clear_live_session_memory(self):
+        if self._ai_engine and hasattr(self._ai_engine, "clear_memory"):
+            try:
+                self._ai_engine.clear_memory()
+            except Exception as exc:
+                logger.debug("Live session memory clear skipped: {}", exc)
 
     @pyqtSlot(bool, str)
     def set_live_capture_enabled(self, enabled: bool, source: str = "douyin"):
@@ -674,6 +697,7 @@ class CaptureWorker(QObject):
     async def _async_stop_wechat(self):
         self._live_capture_enabled = False
         if self._wechat is None:
+            self._clear_live_session_memory()
             self._emit_live_capture_state("disabled", "抓取未启用")
             self.connection_changed.emit("disconnected")
             return
@@ -683,12 +707,14 @@ class CaptureWorker(QObject):
         except Exception:
             pass
         self._wechat = None
+        self._clear_live_session_memory()
         self._emit_live_capture_state("disabled", "抓取未启用")
         self.connection_changed.emit("disconnected")
 
     async def _async_cleanup(self):
         from audio_output import stop_all_audio
         from local_voice_runtime import stop_local_voice_runtime
+        await self._cancel_scheduled_script_task()
         stop_all_audio()
         if self._digital_human_pipeline:
             try:
@@ -761,6 +787,14 @@ class CaptureWorker(QObject):
                 self._loop,
             )
 
+    @pyqtSlot(dict)
+    def set_message_filters(self, filters: dict | None):
+        self._message_filters = _normalize_message_filters(filters)
+
+    def _message_type_allowed(self, msg: dict) -> bool:
+        msg_type = str(msg.get("type", "") or "")
+        return bool(self._message_filters.get(msg_type, False))
+
     def run_voice_action(self, action: dict):
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._async_run_voice_action(dict(action or {})), self._loop)
@@ -799,6 +833,7 @@ class CaptureWorker(QObject):
         if self._digital_human_pipeline:
             await self._digital_human_pipeline.stop()
             self._digital_human_pipeline = None
+            self._clear_live_session_memory()
 
         if self._digital_human_task and not self._digital_human_task.done():
             self._digital_human_task.cancel()
@@ -838,6 +873,7 @@ class CaptureWorker(QObject):
             self._digital_human_pipeline.run(config)
         )
         result = await self._digital_human_task
+        self._clear_live_session_memory()
         self.digital_human_state_changed.emit(result)
 
     async def _async_stop_digital_human(self):
@@ -848,6 +884,7 @@ class CaptureWorker(QObject):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._digital_human_task
         self._digital_human_task = None
+        self._clear_live_session_memory()
         self.digital_human_state_changed.emit({"ok": True, "message": "已停止", "state": "idle"})
 
     async def _async_set_obs_action_settings(self, settings_data: dict | None):
@@ -1023,6 +1060,7 @@ class CaptureWorker(QObject):
             try: await self._capture.stop()
             except: pass
             self._capture = None
+            self._clear_live_session_memory()
         try:
             self._decoder = DanmakuDecoder()
             self._capture = RoomCapture(self._context, url, self._decoder)
@@ -1109,6 +1147,8 @@ class CaptureWorker(QObject):
     async def _on_message(self, msg: dict):
         msg["source"] = "wechat" if self._wechat is not None else "douyin"
         self._last_message_time = time.time()
+        if not self._message_type_allowed(msg):
+            return
         if self._is_duplicate_message(msg):
             return
 
@@ -1179,28 +1219,13 @@ class CaptureWorker(QObject):
                     # Observe latency only when a reply is actually produced — empty
                     # process_message returns (cooldown/filter) shouldn't pollute p95.
                     self._ops_metrics.observe_latency_ms((time.time() - _ai_start) * 1000.0)
-                    self.ai_reply_ready.emit(result.target_user, result.target_msg, result.reply)
-                    self._ops_metrics.record_reply()
-                    if (
-                        self._tts_worker
-                        and VoiceSettings.from_dict(self._voice_settings).copilot_auto_broadcast
-                    ):
-                        self._tts_worker.enqueue(
-                            {
-                                "reply_id": f"copilot-{int(time.time() * 1000)}",
-                                "text": result.reply,
-                                "priority": 5,
-                                "room_id": self._current_room_id,
-                                "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                            },
-                            interrupt=False,
-                        )
+                    await self._dispatch_ai_reply(result)
             except Exception as e:
                 logger.warning("AI reply error: {}", e)
 
     def set_ai_config(self, config):
         from ai_reply import AIReplyEngine
-        from memory_manager import MemoryManager
+        from live_session_memory import LiveSessionMemory
 
         # Preserve state from existing engine (D-05)
         old_history = []
@@ -1217,14 +1242,52 @@ class CaptureWorker(QObject):
         self._ai_engine._conversation_history = old_history
         self._ai_engine._user_cooldowns = old_cooldowns
         # Discard pending_message -- room may have changed (D-05)
-        self._ai_engine.set_memory(MemoryManager(room_id=self._current_room_id))
+        self._ai_engine.set_memory(
+            LiveSessionMemory(session_id=self._current_room_id or "current")
+        )
         self._ai_engine._on_reply = self._emit_pending_reply
         self._ai_engine._on_status = lambda payload: self.ai_runtime_changed.emit(payload)
         self._ai_engine.publish_status()
 
-    async def _emit_pending_reply(self, result):
+    async def _dispatch_ai_reply(self, result, record_metrics: bool = True):
         self.ai_reply_ready.emit(result.target_user, result.target_msg, result.reply)
-        self._ops_metrics.record_reply()
+        if record_metrics:
+            self._ops_metrics.record_reply()
+
+        if getattr(result, "use_voice", False):
+            if self._tts_worker:
+                self._tts_worker.enqueue(
+                    {
+                        "reply_id": f"copilot-{int(time.time() * 1000)}",
+                        "text": result.reply,
+                        "priority": 5,
+                        "room_id": self._current_room_id,
+                        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    },
+                    interrupt=False,
+                )
+            return
+
+        if getattr(result, "platform", "") == "wechat" and self._wechat is not None:
+            try:
+                await self._wechat.send_comment(
+                    self._format_ai_text_reply(result.reply, result.target_user, mention=True)
+                )
+            except Exception as e:
+                logger.warning("AI reply injection error: {}", e)
+
+    async def _emit_pending_reply(self, result):
+        await self._dispatch_ai_reply(result)
+
+    @staticmethod
+    def _format_ai_text_reply(reply: str, nickname: str, mention: bool = True) -> str:
+        text = str(reply or "").strip()
+        if not mention:
+            return text
+        nick = _normalize_display_nickname(nickname)
+        if not nick or not text or text.startswith("@"):
+            return text
+        return f"@{nick} {text}"
 
     async def _enqueue_keyword_voice_insertion(self, reply: str) -> bool:
         text = str(reply or "").strip()
@@ -1325,6 +1388,132 @@ class CaptureWorker(QObject):
             self._keyword_engine.set_active(active_template)
         elif names:
             self._keyword_engine.set_active(names[0])
+
+    def set_scheduled_script_config(
+        self,
+        *,
+        enabled: bool = False,
+        scripts: list[str] | tuple[str, ...] | None = None,
+        interval_sec: int = 120,
+        random_order: bool = False,
+        random_space_enabled: bool = False,
+        voice_enabled: bool = False,
+    ):
+        from live_control_config import normalize_scheduled_scripts
+
+        self._scheduled_scripts_enabled = bool(enabled)
+        self._scheduled_scripts = normalize_scheduled_scripts(list(scripts or []))
+        self._scheduled_scripts_interval_sec = max(10, min(36000, int(interval_sec or 120)))
+        self._scheduled_scripts_random_order = bool(random_order)
+        self._scheduled_scripts_random_space_enabled = bool(random_space_enabled)
+        self._scheduled_scripts_voice_enabled = bool(voice_enabled)
+        if self._scheduled_script_index >= len(self._scheduled_scripts):
+            self._scheduled_script_index = 0
+
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._restart_scheduled_script_task)
+
+    def _sync_scheduled_script_task(self):
+        should_run = self._scheduled_scripts_enabled and bool(self._scheduled_scripts)
+        running = self._scheduled_script_task is not None and not self._scheduled_script_task.done()
+        if should_run and not running:
+            self._scheduled_script_task = self._loop.create_task(self._scheduled_script_loop())
+        elif not should_run and running:
+            self._scheduled_script_task.cancel()
+
+    def _restart_scheduled_script_task(self):
+        running = self._scheduled_script_task is not None and not self._scheduled_script_task.done()
+        if running:
+            self._scheduled_script_task.cancel()
+        self._scheduled_script_task = None
+        self._sync_scheduled_script_task()
+
+    async def _cancel_scheduled_script_task(self):
+        task = self._scheduled_script_task
+        self._scheduled_script_task = None
+        if task and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _scheduled_script_loop(self):
+        try:
+            while self._scheduled_scripts_enabled:
+                await asyncio.sleep(self._scheduled_scripts_interval_sec)
+                if not self._scheduled_scripts_enabled or not self._scheduled_scripts:
+                    continue
+                if not self._live_capture_enabled:
+                    continue
+                await self._dispatch_scheduled_script()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Scheduled live-control script loop stopped: {}", exc)
+        finally:
+            if self._scheduled_script_task is asyncio.current_task():
+                self._scheduled_script_task = None
+
+    def _next_scheduled_script(self) -> str:
+        scripts = [text.strip() for text in self._scheduled_scripts if str(text or "").strip()]
+        if not scripts:
+            return ""
+        if self._scheduled_scripts_random_order:
+            if len(scripts) == 1:
+                return scripts[0]
+            current = self._scheduled_script_index if self._scheduled_script_index < len(scripts) else -1
+            choices = [idx for idx in range(len(scripts)) if idx != current]
+            selected = random.choice(choices)
+            self._scheduled_script_index = selected
+            return scripts[selected]
+
+        selected = self._scheduled_script_index % len(scripts)
+        self._scheduled_script_index = (selected + 1) % len(scripts)
+        return scripts[selected]
+
+    @staticmethod
+    def _insert_random_space(text: str) -> str:
+        value = str(text or "")
+        if not value:
+            return value
+        candidates = [
+            index
+            for index in range(1, len(value))
+            if not value[index - 1].isspace() and not value[index].isspace()
+        ]
+        if candidates:
+            index = random.choice(candidates)
+        elif len(value) > 1:
+            index = random.randint(1, len(value) - 1)
+        else:
+            index = random.randint(0, 1)
+        return f"{value[:index]} {value[index:]}"
+
+    async def _dispatch_scheduled_script(self) -> bool:
+        text = self._next_scheduled_script()
+        if not text:
+            return False
+        dispatch_text = (
+            self._insert_random_space(text)
+            if self._scheduled_scripts_random_space_enabled
+            else text
+        )
+
+        delivered = False
+        if self._scheduled_scripts_voice_enabled:
+            delivered = await self._enqueue_keyword_voice_insertion(dispatch_text)
+        elif self._wechat is not None:
+            try:
+                delivered = await self._wechat.send_comment(dispatch_text)
+            except Exception as exc:
+                logger.warning("Scheduled live-control script injection error: {}", exc)
+                delivered = False
+        else:
+            logger.debug("Scheduled live-control script skipped: no text output channel")
+
+        self.scheduled_script_fired.emit(dispatch_text, delivered)
+        if delivered:
+            self._ops_metrics.record_reply()
+        return delivered
 
     async def _on_tts_event(self, event: dict):
         tts_detail = {
@@ -1682,11 +1871,10 @@ class _BottomStatusBar(QWidget):
     navigate_requested = pyqtSignal(int)
 
     # Maps dot key -> target page index in AiszrApp's sidebar (see finish_init).
-    # After merging DigitalHumanPage into VoiceConfigPage:
-    #   0=home, 1=live, 2=ai, 3=voice (streaming console), 4=obs, 5=settings
+    #   0=home, 1=ai, 2=keyword, 3=scheduled scripts, 4=voice/stream, 5=obs, 6=settings
     # The "dh" dot now jumps to the voice page where streaming lives.
     _DOT_PAGES = {
-        "login": 1, "capture": 1, "ai": 2, "voice": 3, "obs": 4, "dh": 3,
+        "login": 0, "capture": 0, "ai": 1, "voice": 4, "obs": 5, "dh": 4,
     }
     _DOT_TITLES = {
         "login": "登录", "capture": "抓取", "ai": "AI",
@@ -1939,11 +2127,19 @@ class AiszrApp(SiliconApplication):
         self._live_page.connect_requested.connect(self._on_connect_room)
         self._live_page.live_capture_toggle_requested.connect(self._on_live_capture_toggle_requested)
         self._live_page.clear_session_requested.connect(self._on_clear_session)
+        self._live_page.message_filters_changed.connect(worker.set_message_filters)
+        worker.set_message_filters(self._live_page.get_message_filters())
         self._home_page.set_live_page(self._live_page)
 
         self._ai_config_page = AIConfigPage(self)
         self._ai_config_page.back_requested.connect(lambda: self._set_page(0))
         self._ai_config_page._app_ref = self
+
+        self._scheduled_scripts_page = ScheduledScriptsPage(self)
+        self._scheduled_scripts_page.back_requested.connect(lambda: self._set_page(0))
+        self._scheduled_scripts_page.settings_changed.connect(
+            self._on_scheduled_scripts_settings_changed
+        )
 
         self._voice_page = VoiceConfigPage(self)
         self._voice_page.back_requested.connect(lambda: self._set_page(0))
@@ -1990,23 +2186,25 @@ class AiszrApp(SiliconApplication):
         self._keyword_reply_page = KeywordReplyPage(self)
         self._keyword_reply_page.back_requested.connect(lambda: self._set_page(0))
 
-        # Sidebar pages
-        # Indices after merge: 0=home, 1=live, 2=ai, 3=voice (streaming console),
-        # 4=obs, 5=settings. DigitalHumanPage is kept instantiated above for
-        # fallback/rollback but is intentionally NOT registered in the sidebar —
-        # its UI now lives at the bottom of VoiceConfigPage.
+        # Sidebar pages:
+        # 0=home, 1=ai, 2=keyword, 3=scheduled scripts, 4=voice/stream, 5=obs, 6=settings.
+        # DigitalHumanPage is kept as a class for fallback/rollback but its UI
+        # now lives at the bottom of VoiceConfigPage.
         self.layerMain().addPage(self._home_page,
             icon=SiGlobal.siui.iconpack.get("ic_fluent_window_console_filled"),
             hint="首页", side="top")
         self.layerMain().addPage(self._ai_config_page,
             icon=SiGlobal.siui.iconpack.get("ic_fluent_brain_circuit_filled"),
-            hint="AI 配置", side="top")
-        self.layerMain().addPage(self._voice_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_mic_sparkle_filled"),
-            hint="AI 语音 / 推流", side="top")
+            hint="AI 助播", side="top")
         self.layerMain().addPage(self._keyword_reply_page,
             icon=SiGlobal.siui.iconpack.get("ic_fluent_comment_filled"),
             hint="关键词回复", side="top")
+        self.layerMain().addPage(self._scheduled_scripts_page,
+            icon=SiGlobal.siui.iconpack.get("ic_fluent_timer_filled"),
+            hint="场控话术", side="top")
+        self.layerMain().addPage(self._voice_page,
+            icon=SiGlobal.siui.iconpack.get("ic_fluent_mic_sparkle_filled"),
+            hint="AI 语音 / 推流", side="top")
         self.layerMain().addPage(self._obs_page,
             icon=SiGlobal.siui.iconpack.get("ic_fluent_tv_arrow_right_filled"),
             hint="OBS 联动", side="top")
@@ -2021,6 +2219,9 @@ class AiszrApp(SiliconApplication):
         _stacked = self.layerMain().page_view.stacked_container
         _orig_set_idx = _stacked.setCurrentIndex
         def _wrapped_set_idx(index: int, *args, **kwargs):
+            if self._current_page_index() == int(index):
+                self._apply_bottom_bar_visibility(int(index))
+                return
             _orig_set_idx(index, *args, **kwargs)
             self._apply_bottom_bar_visibility(index)
         _stacked.setCurrentIndex = _wrapped_set_idx
@@ -2059,6 +2260,13 @@ class AiszrApp(SiliconApplication):
         # HomePage dashboard wiring
         self._home_page.quick_start_requested.connect(self._on_quick_start)
         self._home_page.quick_stop_requested.connect(self._on_digital_human_stop)
+        self._home_page.ai_assistant_reply_toggled.connect(self._on_home_ai_assistant_reply_toggled)
+        self._home_page.ai_assistant_voice_toggled.connect(self._on_home_ai_assistant_voice_toggled)
+        self._home_page.scheduled_scripts_toggled.connect(self._on_home_scheduled_scripts_toggled)
+        self._home_page.scheduled_random_space_toggled.connect(
+            self._on_home_scheduled_random_space_toggled
+        )
+        self._home_page.keyword_voice_toggled.connect(self._on_home_keyword_voice_toggled)
         worker.danmaku_received.connect(self._home_page.append_activity)
         worker.metrics_updated.connect(self._home_page.update_dashboard_metrics)
         worker.connection_changed.connect(self._home_page.update_uptime_start)
@@ -2066,6 +2274,7 @@ class AiszrApp(SiliconApplication):
 
         # Keyword auto-reply wiring (Phase 10 第二批)
         worker.keyword_reply_fired.connect(self._on_keyword_reply_fired)
+        worker.scheduled_script_fired.connect(self._on_scheduled_script_fired)
         self._keyword_reply_page.auto_reply_toggled.connect(self._on_keyword_auto_reply_toggled)
         self._keyword_reply_page.rules_changed.connect(self._push_keyword_config_to_worker)
         self._keyword_reply_page.rules_changed.connect(self._refresh_home_keyword_card)
@@ -2079,32 +2288,16 @@ class AiszrApp(SiliconApplication):
         self._apply_saved_settings()
 
     def _apply_saved_settings(self):
-        from ai_reply import (
-            DEFAULT_PERSONA_NAME, DEFAULT_PERSONA_ROLE, DEFAULT_PERSONA_STRATEGY,
-            DEFAULT_PERSONA_SCENE, DEFAULT_PERSONA_TONE, DEFAULT_PERSONA_LIMIT,
-            DEFAULT_PERSONA_TABOO,
-        )
+        from live_control_config import LiveControlSettings
+
         settings = _load_settings()
+        live_settings = LiveControlSettings.from_settings(settings)
         page = self._ai_config_page
-        page._suspend_auto_save = True
-        try:
-            if settings.get("api_key"):
-                page._api_key_input.lineEdit().setText(settings["api_key"])
-            if settings.get("base_url"):
-                page._base_url_input.lineEdit().setText(settings["base_url"])
-            if settings.get("reply_interval"):
-                page._interval_spin.setValue(settings["reply_interval"])
-            if settings.get("auto_reply"):
-                page._auto_reply_switch.setChecked(settings["auto_reply"])
-            page._name_input.lineEdit().setText(_text_or_default(settings.get("persona_name"), DEFAULT_PERSONA_NAME))
-            page._role_edit.setPlainText(_text_or_default(settings.get("persona_role"), DEFAULT_PERSONA_ROLE))
-            page._strategy_edit.setPlainText(_text_or_default(settings.get("persona_strategy"), DEFAULT_PERSONA_STRATEGY))
-            page._scene_edit.setPlainText(_text_or_default(settings.get("persona_scene"), DEFAULT_PERSONA_SCENE))
-            page._tone_edit.setPlainText(_text_or_default(settings.get("persona_tone"), DEFAULT_PERSONA_TONE))
-            page._limit_edit.setPlainText(_text_or_default(settings.get("persona_limit"), DEFAULT_PERSONA_LIMIT))
-            page._taboo_edit.setPlainText(_text_or_default(settings.get("persona_taboo"), DEFAULT_PERSONA_TABOO))
-        finally:
-            page._suspend_auto_save = False
+        page.load_live_control_settings(settings)
+        self._scheduled_scripts_page.load_live_control_settings(settings)
+        self._home_page.set_ai_assistant_reply_checked(live_settings.auto_reply)
+        self._home_page.set_ai_assistant_voice_checked(live_settings.voice_reply_enabled)
+        self._home_page.refresh_scheduled_card(live_settings)
         data_source = _normalize_data_source(settings.get("data_source"))
         for idx, option in enumerate(self._settings_page._source_combo.menu().options()):
             if option.value() == data_source or option.text() == data_source:
@@ -2158,6 +2351,63 @@ class AiszrApp(SiliconApplication):
         self._home_page.set_keyword_auto_reply_checked(kw_enabled)
         self._home_page.set_keyword_related_settings(kw_cooldown, kw_rate)
         self._home_page.refresh_keyword_card(active_tmpl)
+        self._push_scheduled_script_config_to_worker()
+
+    def _on_scheduled_scripts_settings_changed(self):
+        settings = _load_settings()
+        from live_control_config import LiveControlSettings
+
+        live_settings = LiveControlSettings.from_settings(settings)
+        self._ai_config_page.load_live_control_settings(settings)
+        self._home_page.refresh_scheduled_card(live_settings)
+        self._push_scheduled_script_config_to_worker()
+        self._update_ai_engine()
+
+    def _save_live_control_settings(self, live_settings):
+        data = _load_settings()
+        data["auto_reply"] = bool(live_settings.auto_reply)
+        data["reply_interval"] = int(live_settings.global_cooldown_sec)
+        data["api_key"] = live_settings.api_key
+        data["base_url"] = live_settings.base_url
+        data["model"] = live_settings.model
+        data["live_control"] = live_settings.to_settings_payload()
+        _save_settings(data)
+        self._ai_config_page.load_live_control_settings(data)
+        self._scheduled_scripts_page.load_live_control_settings(data)
+        self._home_page.set_ai_assistant_reply_checked(live_settings.auto_reply)
+        self._home_page.set_ai_assistant_voice_checked(live_settings.voice_reply_enabled)
+        self._home_page.refresh_scheduled_card(live_settings)
+        self._update_ai_engine()
+
+    def _on_home_ai_assistant_reply_toggled(self, enabled: bool):
+        from live_control_config import LiveControlSettings
+
+        live_settings = LiveControlSettings.from_settings(_load_settings())
+        live_settings.auto_reply = bool(enabled)
+        self._save_live_control_settings(live_settings)
+
+    def _on_home_ai_assistant_voice_toggled(self, enabled: bool):
+        from live_control_config import LiveControlSettings
+
+        live_settings = LiveControlSettings.from_settings(_load_settings())
+        live_settings.voice_reply_enabled = bool(enabled)
+        self._save_live_control_settings(live_settings)
+
+    def _on_home_scheduled_scripts_toggled(self, enabled: bool):
+        from live_control_config import LiveControlSettings
+
+        live_settings = LiveControlSettings.from_settings(_load_settings())
+        live_settings.scheduled_scripts_enabled = bool(enabled)
+        self._save_live_control_settings(live_settings)
+        self._push_scheduled_script_config_to_worker()
+
+    def _on_home_scheduled_random_space_toggled(self, enabled: bool):
+        from live_control_config import LiveControlSettings
+
+        live_settings = LiveControlSettings.from_settings(_load_settings())
+        live_settings.scheduled_scripts_random_space_enabled = bool(enabled)
+        self._save_live_control_settings(live_settings)
+        self._push_scheduled_script_config_to_worker()
 
     def _open_voice_api_dialog(self):
         self._voice_api_dialog.load_voice_settings(_load_settings().get("voice"))
@@ -2198,12 +2448,40 @@ class AiszrApp(SiliconApplication):
         except Exception:
             pass
 
+    def _on_scheduled_script_fired(self, script: str, delivered: bool):
+        status = "✓" if delivered else "✗未发送"
+        preview = str(script or "").replace("\n", " ").strip()
+        if len(preview) > 36:
+            preview = preview[:36] + "…"
+        try:
+            self._home_page.append_activity(f"⏱ 定时场控『{preview}』 {status}")
+        except Exception:
+            pass
+
     def _on_keyword_auto_reply_toggled(self, enabled: bool):
         data = _load_settings()
         data["keyword_auto_reply_enabled"] = bool(enabled)
         _save_settings(data)
         self._keyword_reply_page.set_auto_reply_checked(enabled)
         self._home_page.set_keyword_auto_reply_checked(enabled)
+        self._push_keyword_config_to_worker()
+
+    def _on_home_keyword_voice_toggled(self, enabled: bool):
+        data = _load_settings()
+        templates = data.get("keyword_templates", {}) or {}
+        active = self._home_page.get_keyword_template_name() or self._keyword_reply_page.get_active_template_name()
+        template = templates.get(active)
+        if not isinstance(template, dict):
+            self._home_page.set_keyword_voice_checked(False)
+            return
+        rules = template.get("rules") or []
+        for rule in rules:
+            if isinstance(rule, dict) and str(rule.get("keyword") or "").strip():
+                rule["generate_voice"] = bool(enabled)
+        data["keyword_templates"] = templates
+        _save_settings(data)
+        self._keyword_reply_page.reload_from_settings(active)
+        self._home_page.refresh_keyword_card(active)
         self._push_keyword_config_to_worker()
 
     def _push_keyword_config_to_worker(self):
@@ -2215,6 +2493,20 @@ class AiszrApp(SiliconApplication):
             global_cooldown_sec=int(data.get("keyword_auto_reply_global_cooldown_sec", 30)),
             rate_limit_per_min=int(data.get("keyword_auto_reply_rate_limit_per_min", 20)),
             voice_provider=str(data.get("keyword_voice_provider") or "local_voice"),
+        )
+
+    def _push_scheduled_script_config_to_worker(self):
+        from live_control_config import LiveControlSettings
+
+        live_settings = LiveControlSettings.from_settings(_load_settings())
+        template = live_settings.get_active_template()
+        self._worker.set_scheduled_script_config(
+            enabled=live_settings.scheduled_scripts_enabled,
+            scripts=template.scheduled_scripts,
+            interval_sec=live_settings.scheduled_scripts_interval_sec,
+            random_order=live_settings.scheduled_scripts_random_order,
+            random_space_enabled=live_settings.scheduled_scripts_random_space_enabled,
+            voice_enabled=live_settings.scheduled_scripts_voice_enabled,
         )
 
     def _refresh_home_keyword_card(self):
@@ -2279,12 +2571,23 @@ class AiszrApp(SiliconApplication):
 
     # Pages where the bottom status bar adds no value and should be hidden:
     # - HomePage (0): checklist already covers the same info
-    # - SettingsPage (5): settings have no live state worth surfacing
-    # After merging DigitalHumanPage into VoiceConfigPage, settings shifted
-    # from index 6 down to 5 (no DH slot between OBS and Settings).
-    _BOTTOM_BAR_HIDDEN_PAGES = {0, 5}
+    # - SettingsPage (6): settings have no live state worth surfacing
+    _BOTTOM_BAR_HIDDEN_PAGES = {0, 6}
+
+    def _current_page_index(self) -> int:
+        try:
+            return int(self.layerMain().page_view.stacked_container.currentIndex())
+        except Exception:
+            try:
+                return int(self.layerMain().page_view.page_navigator.currentIndex())
+            except Exception:
+                return -1
 
     def _set_page(self, index: int):
+        index = int(index)
+        if self._current_page_index() == index:
+            self._apply_bottom_bar_visibility(index)
+            return
         self.layerMain().setPage(index)
         self.layerMain().page_view.page_navigator.setCurrentIndex(index)
         self._apply_bottom_bar_visibility(index)
@@ -2335,6 +2638,7 @@ class AiszrApp(SiliconApplication):
     def _refresh_theme_styles(self):
         pages = [
             self._home_page, self._live_page, self._ai_config_page,
+            self._scheduled_scripts_page,
             self._voice_page, self._obs_page, self._settings_page,
             self._keyword_reply_page,
         ]
@@ -2355,30 +2659,59 @@ class AiszrApp(SiliconApplication):
 
     def _activate_ai(self):
         config_dict = self._ai_config_page.get_ai_config_dict()
+        self._push_scheduled_script_config_to_worker()
         if config_dict.get("api_key"):
             from ai_reply import AIConfig
+            from live_control_config import LiveControlTemplate
+
+            live_template = LiveControlTemplate.from_dict(
+                config_dict.get("live_control_template") or {}
+            )
             config = AIConfig(
                 api_key=config_dict["api_key"],
                 base_url=config_dict.get("base_url", "https://api.deepseek.com/v1"),
                 model=config_dict.get("model", "deepseek-chat"),
                 system_prompt=config_dict.get("system_prompt", ""),
-                auto_reply=self._ai_config_page._auto_reply_switch.isChecked(),
+                auto_reply=bool(config_dict.get("auto_reply", False)),
                 reply_interval=config_dict.get("reply_interval", 30),
+                reply_char_limit=config_dict.get("reply_char_limit", 80),
+                user_cooldown_sec=config_dict.get("user_cooldown_sec", 60),
+                tone_style=config_dict.get("tone_style", "natural"),
+                mention_user=bool(config_dict.get("mention_user", True)),
+                voice_reply_enabled=bool(config_dict.get("voice_reply_enabled", False)),
+                live_control_template=live_template,
             )
             self._worker.set_ai_config(config)
             logger.info("AI engine activated (auto_reply={})", config.auto_reply)
 
     def _update_ai_engine(self):
+        self._push_scheduled_script_config_to_worker()
         if self._worker._ai_engine:
+            from live_control_config import LiveControlTemplate
+
             config_dict = self._ai_config_page.get_ai_config_dict()
             engine = self._worker._ai_engine
-            engine.config.auto_reply = self._ai_config_page._auto_reply_switch.isChecked()
+            engine.config.auto_reply = bool(config_dict.get("auto_reply", False))
             engine.config.reply_interval = config_dict.get("reply_interval", 30)
             engine.config.system_prompt = config_dict.get("system_prompt", "")
             engine.config.api_key = config_dict.get("api_key", "")
             engine.config.base_url = config_dict.get("base_url", "https://api.deepseek.com/v1")
+            engine.config.model = config_dict.get("model", "deepseek-chat")
+            engine.config.reply_char_limit = config_dict.get("reply_char_limit", 80)
+            engine.config.user_cooldown_sec = config_dict.get("user_cooldown_sec", 60)
+            engine.config.tone_style = config_dict.get("tone_style", "natural")
+            engine.config.mention_user = bool(config_dict.get("mention_user", True))
+            engine.config.voice_reply_enabled = bool(config_dict.get("voice_reply_enabled", False))
+            engine.config.live_control_template = LiveControlTemplate.from_dict(
+                config_dict.get("live_control_template") or {}
+            )
             engine.publish_status()
             logger.info("AI engine updated (auto_reply={})", engine.config.auto_reply)
+        if (
+            hasattr(self, "_scheduled_scripts_page")
+            and not getattr(self._scheduled_scripts_page, "_dirty", False)
+        ):
+            self._scheduled_scripts_page.load_live_control_settings(_load_settings())
 
     def _on_connect_room(self, url: str, source: str = "douyin"):
         if source == "wechat":
@@ -2407,7 +2740,7 @@ class AiszrApp(SiliconApplication):
             return
         config = self._voice_page.get_streaming_config_dict()
         if not config.get("video_path"):
-            self._set_page(3)
+            self._set_page(4)
             self.LayerRightMessageSidebar().send(
                 title="一键开播",
                 text="请先在 AI 语音 / 推流 页选择一段绿幕素材，再次点击一键开播。",
@@ -2417,7 +2750,7 @@ class AiszrApp(SiliconApplication):
             )
             return
         if config.get("avatar_ready") is False:
-            self._set_page(3)
+            self._set_page(4)
             self.LayerRightMessageSidebar().send(
                 title="一键开播",
                 text="当前主播形象还在处理，完成后再点击一键开播。",
@@ -2497,6 +2830,7 @@ class AiszrApp(SiliconApplication):
 
 from ui_pages.homepage import HomePage
 from ui_pages.aiconfigpage import AIConfigPage
+from ui_pages.scheduled_scripts_page import ScheduledScriptsPage
 from ui_pages.voiceconfigpage import VoiceConfigPage
 from ui_dialogs.voiceapidialog import VoiceApiDialog
 from ui_dialogs.voiceclonedialog import VoiceCloneDialog
