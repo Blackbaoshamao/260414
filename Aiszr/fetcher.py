@@ -232,7 +232,7 @@ def _run_desktop():
 
     # Register bundled Inter TTFs (macOS Sonoma look). Missing fonts/ → no-op,
     # the cascade below falls back to PingFang SC / 阿里巴巴 / YaHei.
-    from ui_theme import register_app_fonts
+    from ui_theme import UI_FONT_FAMILIES, register_app_fonts
     register_app_fonts()
 
     # Load Qt's built-in Simplified Chinese translation so standard widget
@@ -246,14 +246,9 @@ def _run_desktop():
 
     # Global app font — Inter (Latin) → PingFang SC / 阿里巴巴 / YaHei (CJK).
     # Qt picks per-glyph from the family list so mixed text renders correctly.
-    _ui_font = QFont("Inter", 10)
+    _ui_font = QFont(UI_FONT_FAMILIES[0], 10)
     try:
-        _ui_font.setFamilies([
-            "Inter",
-            "PingFang SC",
-            "阿里巴巴普惠体 3.0 55 Regular",
-            "Microsoft YaHei UI",
-        ])
+        _ui_font.setFamilies(UI_FONT_FAMILIES)
     except AttributeError:
         pass  # Qt < 5.13 lacks setFamilies; single family + stylesheet cascade still works
     _ui_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
@@ -312,4 +307,3 @@ def _run_desktop():
 
 if __name__ == "__main__":
     _run_desktop()
-

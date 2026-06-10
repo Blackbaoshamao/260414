@@ -319,7 +319,7 @@ def _apply_qt_global_theme():
            Without this rule, widgets that have their own stylesheet (e.g.
            color/border declarations) lose the application-level QFont family. */
         * {{
-            font-family: "Inter", "PingFang SC", "阿里巴巴普惠体 3.0 55 Regular", "Microsoft YaHei UI", sans-serif;
+            font-family: {UI_FONT_STACK_CSS};
         }}
         QLabel {{
             color: {CLR_TEXT_SEC};
@@ -658,43 +658,61 @@ def _install_secret_reveal_action(edit: QLineEdit):
 
 def _tune_font_quality(font: QFont) -> None:
     """Maximize text rendering quality: anti-alias + full hinting."""
+    font.setKerning(True)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     try:
-        font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+        font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
     except AttributeError:
         pass
 
 
-FONT_MONO = QFont("JetBrains Mono", 12)
-_tune_font_quality(FONT_MONO)
-FONT_MONO_SMALL = QFont("JetBrains Mono", 10)
-_tune_font_quality(FONT_MONO_SMALL)
+UI_FONT_FAMILIES = [
+    "SF Pro Text",
+    "SF Pro Display",
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei UI",
+    "Noto Sans CJK SC",
+    "Arial",
+]
+MONO_FONT_FAMILIES = [
+    "SF Mono",
+    "Cascadia Mono",
+    "JetBrains Mono",
+    "Consolas",
+    "Microsoft YaHei UI",
+]
+UI_FONT_STACK_CSS = ", ".join(f'"{name}"' for name in UI_FONT_FAMILIES) + ", sans-serif"
 
 
-def _make_ui_font(size: int, weight: int = QFont.Normal) -> QFont:
-    """UI font with macOS Sonoma cascade: Inter → PingFang SC → 阿里巴巴 → YaHei."""
-    f = QFont("Inter", size, weight)
+def _make_font(families: list[str], size: int, weight: int = QFont.Normal) -> QFont:
+    f = QFont(families[0], size, weight)
     try:
-        f.setFamilies([
-            "Inter",
-            "PingFang SC",
-            "阿里巴巴普惠体 3.0 55 Regular",
-            "Microsoft YaHei UI",
-        ])
+        f.setFamilies(families)
     except AttributeError:
-        pass  # Qt < 5.13: rely on global stylesheet font-family cascade
+        pass
     _tune_font_quality(f)
     return f
 
 
+FONT_MONO = _make_font(MONO_FONT_FAMILIES, 11)
+FONT_MONO_SMALL = _make_font(MONO_FONT_FAMILIES, 9)
+
+
+def _make_ui_font(size: int, weight: int = QFont.Normal) -> QFont:
+    """UI font with iOS/Windows-friendly cascade and CJK-safe fallbacks."""
+    return _make_font(UI_FONT_FAMILIES, size, weight)
+
+
 # Sonoma type scale
-FONT_CAPTION   = _make_ui_font(10)
-FONT_BODY      = _make_ui_font(11)
-FONT_BODY_EMPH = _make_ui_font(11, QFont.DemiBold)
-FONT_HEADLINE  = _make_ui_font(13, QFont.DemiBold)
-FONT_TITLE_2   = _make_ui_font(17, QFont.DemiBold)
+FONT_CAPTION   = _make_ui_font(9)
+FONT_BODY      = _make_ui_font(10)
+FONT_BODY_EMPH = _make_ui_font(10, QFont.DemiBold)
+FONT_HEADLINE  = _make_ui_font(12, QFont.DemiBold)
+FONT_TITLE_2   = _make_ui_font(16, QFont.DemiBold)
 FONT_TITLE_2.setLetterSpacing(QFont.PercentageSpacing, 100)
-FONT_TITLE_1   = _make_ui_font(22, QFont.Bold)
+FONT_TITLE_1   = _make_ui_font(21, QFont.Bold)
 FONT_TITLE_1.setLetterSpacing(QFont.PercentageSpacing, 100)
 
 # Backward-compat aliases — existing imports of FONT_UI / FONT_TITLE keep working
