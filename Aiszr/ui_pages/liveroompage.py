@@ -82,7 +82,7 @@ class LiveRoomPage(SiPage):
         self._top_bar_widget = QWidget(container)
         top_bar = QHBoxLayout(self._top_bar_widget)
         top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.setSpacing(10)
+        top_bar.setSpacing(8)
 
         self._capture_source = "douyin"
         self._source_combo = MacComboBox()
@@ -90,31 +90,32 @@ class LiveRoomPage(SiPage):
                                     "抖音", "douyin")
         self._source_combo.addItem(_fluent_icon("ic_fluent_chat_filled"),
                                     "微信", "wechat")
-        self._source_combo.setFixedSize(130, 36)
+        self._source_combo.setFixedSize(118, 34)
         self._source_combo.setFont(FONT_UI)
         self._source_combo.currentIndexChanged.connect(self._on_source_changed)
         top_bar.addWidget(self._source_combo)
 
         self._room_input = MacLineEdit(placeholder="输入直播间 ID 或 URL 后连接")
         self._room_input.setFont(FONT_MONO)
+        self._room_input.setFixedHeight(34)
         self._room_input.returnPressed.connect(self._on_connect)
         top_bar.addWidget(self._room_input, stretch=1)
 
         self._live_capture_btn = MacButton("启动", variant="secondary")
-        self._live_capture_btn.setFixedSize(120, 36)
+        self._live_capture_btn.setFixedSize(112, 34)
         self._live_capture_btn.setFont(FONT_UI)
         self._live_capture_btn.clicked.connect(self._on_live_capture_button_clicked)
         top_bar.addWidget(self._live_capture_btn)
 
         self._connect_btn = MacButton("连接", variant="primary")
-        self._connect_btn.setFixedSize(80, 36)
+        self._connect_btn.setFixedSize(72, 34)
         self._connect_btn.setFont(FONT_UI)
         self._connect_btn.clicked.connect(self._on_connect)
         self._connect_btn.setEnabled(False)
         top_bar.addWidget(self._connect_btn)
 
         self._reset_btn = MacButton("重登", variant="destructive")
-        self._reset_btn.setFixedSize(60, 36)
+        self._reset_btn.setFixedSize(60, 34)
         self._reset_btn.setFont(FONT_UI)
         self._reset_btn.clicked.connect(self.clear_session_requested.emit)
         top_bar.addWidget(self._reset_btn)
@@ -131,7 +132,7 @@ class LiveRoomPage(SiPage):
         self._metrics_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         top_bar.addWidget(self._metrics_label)
 
-        self._top_bar_widget.setFixedHeight(48)
+        self._top_bar_widget.setFixedHeight(40)
 
         # Title
         self._danmaku_title_label = QLabel("直播弹幕", container)
@@ -151,7 +152,7 @@ class LiveRoomPage(SiPage):
             self._filter_checks[key] = checkbox
             filter_layout.addWidget(checkbox)
         filter_layout.addStretch(1)
-        self._filter_bar.setFixedHeight(32)
+        self._filter_bar.setFixedHeight(28)
 
         # Danmaku displays — two independent displays, toggled by source
         self._display_dy = DanmakuDisplay(container)
@@ -187,17 +188,15 @@ class LiveRoomPage(SiPage):
         cw = self._live_container.width()
         if cw <= 0:
             return
-        margin = 16
-        spacing = 8
+        margin = 14
+        spacing = 6
         inner_w = cw - margin * 2
         # Top bar
-        self._top_bar_widget.setGeometry(margin, 8, inner_w, 48)
-        # Title
+        self._top_bar_widget.setGeometry(margin, 4, inner_w, 40)
+        # Title + filters share one compact row.
         ty = self._top_bar_widget.geometry().bottom() + spacing
-        self._danmaku_title_label.setGeometry(margin, ty, inner_w, 22)
-        # Filter bar
-        fy = self._danmaku_title_label.geometry().bottom() + spacing
-        self._filter_bar.setGeometry(margin, fy, inner_w, 32)
+        self._danmaku_title_label.setGeometry(margin, ty + 2, 70, 24)
+        self._filter_bar.setGeometry(margin + 78, ty, max(80, inner_w - 78), 28)
         # Danmaku display fills the rest
         dy = self._filter_bar.geometry().bottom() + spacing
         display_h = h - dy - margin
@@ -300,8 +299,8 @@ class LiveRoomPage(SiPage):
         self._room_input.setVisible(not is_wechat)
         self._connect_btn.setVisible(not is_wechat)
         self._reset_btn.setVisible(not is_wechat)
-        self._live_capture_btn.setFixedWidth(138 if is_wechat else 120)
-        self._status_label.setFixedWidth(172 if is_wechat else 130)
+        self._live_capture_btn.setFixedWidth(130 if is_wechat else 112)
+        self._status_label.setFixedWidth(164 if is_wechat else 124)
         if is_wechat:
             self._room_input.clearFocus()
 

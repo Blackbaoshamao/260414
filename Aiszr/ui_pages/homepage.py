@@ -596,8 +596,17 @@ class HomePage(SiPage):
         self._kw_combo.currentTextChanged.connect(self._on_kw_template_changed)
         body.addWidget(self._kw_combo)
 
+        self._kw_summary_label = QLabel("未选择模板")
+        self._kw_summary_label.setFont(theme.FONT_CAPTION)
+        self._kw_summary_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_SEC}; border: none; background: transparent;"
+        )
+        body.addWidget(self._kw_summary_label)
+
         self._kw_preview = QTextBrowser()
-        self._kw_preview.setMinimumHeight(80)
+        self._kw_preview.setMinimumHeight(120)
+        self._kw_preview.setMaximumHeight(180)
+        self._apply_kw_preview_style()
         body.addWidget(self._kw_preview)
 
         # 时长调整 — 左右一半：冷却秒 / 每分钟最多响应
@@ -628,6 +637,19 @@ class HomePage(SiPage):
 
         body.addLayout(cfg_row)
         return card
+
+    def _apply_kw_preview_style(self):
+        if not hasattr(self, "_kw_preview"):
+            return
+        self._kw_preview.setStyleSheet(
+            f"QTextBrowser {{"
+            f"background-color: {theme.CLR_BG_INSET};"
+            f"color: {theme.CLR_TEXT_PRI};"
+            f"border: 1px solid {theme.CLR_HAIRLINE};"
+            f"border-radius: {theme.RADIUS_MD}px;"
+            f"padding: 8px 10px;"
+            f"}}"
+        )
 
     def _on_kw_related_changed(self):
         try:
@@ -669,19 +691,41 @@ class HomePage(SiPage):
         data = _load_settings()
         tmpl = (data.get("keyword_templates") or {}).get(name) or {}
         rules = tmpl.get("rules") or []
-        if not rules:
+        valid_rules = []
+        for r in rules:
+            kw = (r.get("keyword") or "").strip()
+            if kw:
+                valid_rules.append(r)
+        if not valid_rules:
+            if hasattr(self, "_kw_summary_label"):
+                self._kw_summary_label.setText("0 条规则 · 语音未开")
             self._kw_preview.setPlainText("（该模板下还没有规则）")
             self.set_keyword_voice_checked(False)
             return
+        voice_enabled = self._keyword_template_voice_enabled(name)
+        if hasattr(self, "_kw_summary_label"):
+            self._kw_summary_label.setText(
+                f"{len(valid_rules)} 条规则 · {'语音已开' if voice_enabled else '语音未开'}"
+            )
         lines = []
-        for r in rules:
+        for index, r in enumerate(valid_rules[:6], start=1):
             kw = (r.get("keyword") or "").strip()
-            reply = (r.get("reply") or "").strip()
-            if not kw:
-                continue
-            lines.append(f"{kw} → {reply}")
-        self._kw_preview.setPlainText("\n".join(lines) if lines else "（该模板下还没有规则）")
-        self.set_keyword_voice_checked(self._keyword_template_voice_enabled(name))
+            reply = " ".join((r.get("reply") or "").strip().split())
+            lines.append(
+                f"{index}. {self._short_text(kw, 12)} → {self._short_text(reply, 34)}"
+            )
+        remaining = len(valid_rules) - len(lines)
+        if remaining > 0:
+            lines.append(f"... 还有 {remaining} 条")
+        self._kw_preview.setPlainText("\n".join(lines))
+        self.set_keyword_voice_checked(voice_enabled)
+
+    @staticmethod
+    def _short_text(text: str, limit: int) -> str:
+        text = str(text or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(1, limit - 1)] + "…"
 
     def _keyword_template_voice_enabled(self, name: str) -> bool:
         data = _load_settings()
@@ -705,6 +749,8 @@ class HomePage(SiPage):
         if current:
             self._render_kw_preview(current)
         else:
+            if hasattr(self, "_kw_summary_label"):
+                self._kw_summary_label.setText("未选择模板")
             self._kw_preview.setPlainText("（还没有模板）")
             self.set_keyword_voice_checked(False)
 
@@ -1261,6 +1307,11 @@ class HomePage(SiPage):
         # Hero title — needs CLR_TEXT_PRI, not the global QLabel default (text_sec)
         if hasattr(self, "_hero_title"):
             self._apply_hero_styles()
+        if hasattr(self, "_kw_summary_label"):
+            self._kw_summary_label.setStyleSheet(
+                f"color: {theme.CLR_TEXT_SEC}; border: none; background: transparent;"
+            )
+        self._apply_kw_preview_style()
         # Propagate to every Mac* component. Some widgets (e.g. DanmakuDisplay)
         # use the underscored `_apply_theme_styles` convention — accept either.
         for w in self.findChildren(QWidget):

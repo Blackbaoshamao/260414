@@ -251,7 +251,9 @@ class MacButton(QPushButton):
         elif v == "pill":
             off_fill = theme._mix_hex_colors(theme.CLR_BG_INSET, theme.CLR_BG_CARD, 0.30)
             off_hover = theme._mix_hex_colors(theme.CLR_BG_INSET, theme.CLR_BG_CARD, 0.58)
-            checked_hover = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_ACCENT_TEXT, 0.10)
+            checked_fill = theme._hex_with_alpha(theme.CLR_ACCENT, 34)
+            checked_hover = theme._hex_with_alpha(theme.CLR_ACCENT, 48)
+            checked_border = theme._hex_with_alpha(theme.CLR_ACCENT, 96)
             ss = f"""
                 QPushButton {{
                     background-color: {off_fill};
@@ -268,13 +270,14 @@ class MacButton(QPushButton):
                     border-color: {theme.CLR_BORDER};
                 }}
                 QPushButton:checked {{
-                    background-color: {theme.CLR_ACCENT};
-                    color: {theme.CLR_ACCENT_TEXT};
-                    border-color: {theme.CLR_ACCENT};
+                    background-color: {checked_fill};
+                    color: {theme.CLR_ACCENT};
+                    border-color: {checked_border};
                 }}
                 QPushButton:checked:hover {{
                     background-color: {checked_hover};
-                    border-color: {checked_hover};
+                    color: {theme.CLR_ACCENT};
+                    border-color: {checked_border};
                 }}
             """
         else:  # secondary — visibly fills on dark bg via brighter computed fill
