@@ -12,9 +12,9 @@ if __package__ in {None, ""}:
 
 import numpy as np
 from PyQt5.QtCore import (
-    pyqtSignal, Qt, QRectF, QAbstractNativeEventFilter, QTimer,
+    pyqtSignal, Qt, QRectF, QAbstractNativeEventFilter, QTimer, QSize,
 )
-from PyQt5.QtGui import QColor, QIntValidator, QPainter, QPixmap
+from PyQt5.QtGui import QColor, QIcon, QIntValidator, QPainter, QPixmap
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -74,6 +74,21 @@ def _icon_svg(name: str) -> str:
             name, color_code=SiGlobal.siui.colors["SVG_NORMAL"])
     except Exception:
         return ""
+
+
+def _fluent_icon(name: str, size: int = 18) -> QIcon:
+    svg_data = _icon_svg(name)
+    if not svg_data:
+        return QIcon()
+    if isinstance(svg_data, str):
+        svg_data = svg_data.encode("utf-8")
+    renderer = QSvgRenderer(svg_data)
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter, QRectF(0, 0, size, size))
+    painter.end()
+    return QIcon(pixmap)
 
 
 class _VolumeIcon(QWidget):
@@ -797,21 +812,25 @@ class HomePage(SiPage):
             "开启AI助播回复",
             "关闭AI助播回复",
             self._on_ai_reply_toggled,
+            "ic_fluent_brain_circuit_filled",
         )
         self._ai_voice_btn = self._make_toggle_button(
             "开启AI助播语音",
             "关闭AI助播语音",
             self._on_ai_voice_toggled,
+            "ic_fluent_mic_sparkle_filled",
         )
         self._keyword_auto_reply_btn = self._make_toggle_button(
             "开启关键词自动回复",
             "关闭关键词回复",
             self._on_keyword_pill_toggled,
+            "ic_fluent_comment_filled",
         )
         self._keyword_voice_quick_btn = self._make_toggle_button(
             "开启关键词语音",
             "关闭关键词语音",
             self._on_keyword_voice_toggled,
+            "ic_fluent_speaker_2_filled",
         )
 
         grid.addWidget(self._ai_reply_btn, 0, 0)
@@ -823,7 +842,9 @@ class HomePage(SiPage):
         obs_row = QHBoxLayout()
         obs_row.setSpacing(theme.SPACING_SM)
         self._obs_connect_btn = MacButton("连接OBS", variant="secondary")
-        self._obs_connect_btn.setFixedHeight(30)
+        self._obs_connect_btn.setIcon(_fluent_icon("ic_fluent_tv_arrow_right_filled", 16))
+        self._obs_connect_btn.setIconSize(QSize(16, 16))
+        self._obs_connect_btn.setFixedHeight(34)
         self._obs_connect_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._obs_connect_btn.clicked.connect(self._on_obs_connect_clicked)
         obs_row.addWidget(self._obs_connect_btn, stretch=1)
@@ -834,11 +855,20 @@ class HomePage(SiPage):
         self._set_obs_connected(False)
         return card
 
-    def _make_toggle_button(self, off_text: str, on_text: str, handler) -> MacButton:
+    def _make_toggle_button(
+        self,
+        off_text: str,
+        on_text: str,
+        handler,
+        icon_name: str = "",
+    ) -> MacButton:
         btn = MacButton(off_text, variant="pill")
         btn.setCheckable(True)
-        btn.setFixedHeight(30)
+        btn.setFixedHeight(34)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        if icon_name:
+            btn.setIcon(_fluent_icon(icon_name, 16))
+            btn.setIconSize(QSize(16, 16))
         btn._off_text = off_text
         btn._on_text = on_text
         btn.toggled.connect(handler)

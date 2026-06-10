@@ -33,13 +33,13 @@ def _build_shadow(elevation: int) -> Optional[QGraphicsDropShadowEffect]:
         return None
     effect = QGraphicsDropShadowEffect()
     if elevation == 1:
-        effect.setBlurRadius(8)
-        effect.setOffset(0, 2)
-        effect.setColor(QColor(0, 0, 0, 40))   # ~16% alpha
+        effect.setBlurRadius(18)
+        effect.setOffset(0, 5)
+        effect.setColor(QColor(0, 0, 0, 20))
     else:
-        effect.setBlurRadius(16)
-        effect.setOffset(0, 6)
-        effect.setColor(QColor(0, 0, 0, 56))   # ~22% alpha
+        effect.setBlurRadius(28)
+        effect.setOffset(0, 10)
+        effect.setColor(QColor(0, 0, 0, 28))
     return effect
 
 
@@ -113,7 +113,7 @@ class MacCard(QFrame):
                  vibrancy: bool = False,
                  radius: int = theme.RADIUS_LG,
                  elevation: int = 1,
-                 padding: tuple = (16, 14, 16, 14)):
+                 padding: tuple = (14, 12, 14, 12)):
         super().__init__(parent)
         self._vibrancy = vibrancy
         self._radius = radius
@@ -195,6 +195,8 @@ class MacButton(QPushButton):
         r = theme.RADIUS_MD
         v = self._variant
         if v == "primary":
+            hover = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_ACCENT_TEXT, 0.12)
+            pressed = theme._mix_hex_colors(theme.CLR_ACCENT, "#000000", 0.08)
             ss = f"""
                 QPushButton {{
                     background-color: {theme.CLR_ACCENT};
@@ -204,8 +206,8 @@ class MacButton(QPushButton):
                     padding: 6px 14px;
                     font-weight: 600;
                 }}
-                QPushButton:hover {{ background-color: {theme.CLR_ACCENT_LIGHT}; }}
-                QPushButton:pressed {{ background-color: {theme.CLR_ACCENT}; }}
+                QPushButton:hover {{ background-color: {hover}; }}
+                QPushButton:pressed {{ background-color: {pressed}; }}
                 QPushButton:disabled {{
                     background-color: {theme.CLR_BG_ELEVATED};
                     color: {theme.CLR_TEXT_TERT};
@@ -247,25 +249,38 @@ class MacButton(QPushButton):
                 }}
             """
         elif v == "pill":
+            off_fill = theme._mix_hex_colors(theme.CLR_BG_INSET, theme.CLR_BG_CARD, 0.30)
+            off_hover = theme._mix_hex_colors(theme.CLR_BG_INSET, theme.CLR_BG_CARD, 0.58)
+            checked_hover = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_ACCENT_TEXT, 0.10)
             ss = f"""
                 QPushButton {{
-                    background-color: {theme.CLR_BG_ELEVATED};
+                    background-color: {off_fill};
                     color: {theme.CLR_TEXT_SEC};
-                    border: 1px solid {theme.CLR_BORDER};
-                    border-radius: 13px;
-                    padding: 4px 14px;
+                    border: 1px solid {theme.CLR_HAIRLINE};
+                    border-radius: {r}px;
+                    padding: 5px 12px;
+                    font-weight: 600;
+                    text-align: center;
                 }}
-                QPushButton:hover {{ border-color: {theme.CLR_ACCENT}; }}
+                QPushButton:hover {{
+                    background-color: {off_hover};
+                    color: {theme.CLR_TEXT_PRI};
+                    border-color: {theme.CLR_BORDER};
+                }}
                 QPushButton:checked {{
                     background-color: {theme.CLR_ACCENT};
                     color: {theme.CLR_ACCENT_TEXT};
                     border-color: {theme.CLR_ACCENT};
                 }}
+                QPushButton:checked:hover {{
+                    background-color: {checked_hover};
+                    border-color: {checked_hover};
+                }}
             """
         else:  # secondary — visibly fills on dark bg via brighter computed fill
-            fill = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_TEXT_PRI, 0.08)
-            fill_hover = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_TEXT_PRI, 0.16)
-            border_color = theme._mix_hex_colors(theme.CLR_BORDER, theme.CLR_TEXT_PRI, 0.18)
+            fill = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_TEXT_PRI, 0.03)
+            fill_hover = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_TEXT_PRI, 0.07)
+            border_color = theme.CLR_HAIRLINE
             ss = f"""
                 QPushButton {{
                     background-color: {fill};

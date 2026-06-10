@@ -104,20 +104,20 @@ SiSwitch = _iOSToggle
 # Color & font constants (macOS Sonoma)
 # ---------------------------------------------------------------------------
 
-# Spacing & radius scale
-RADIUS_SM, RADIUS_MD, RADIUS_LG, RADIUS_XL = 6, 10, 14, 20
-SPACING_XS, SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL = 4, 8, 12, 20, 32
+# Spacing & radius scale tuned for a restrained iOS control-center feel.
+RADIUS_SM, RADIUS_MD, RADIUS_LG, RADIUS_XL = 5, 7, 8, 12
+SPACING_XS, SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL = 4, 8, 12, 18, 28
 
 # ARGB notation #AARRGGBB. bg_vibrancy α=184 (72%), hairline α=23 (~9%), selected_bg α=46 (~18%)
 _THEMES = {
     "moonstone": {
-        "bg": "#ECECEC", "bg_elevated": "#F2F2F7", "bg_card": "#FFFFFF",
-        "bg_inset": "#E5E5EA", "border": "#D1D1D6", "input_bg": "#FFFFFF", "is_light": True,
+        "bg": "#F4F5F7", "bg_elevated": "#FAFAFC", "bg_card": "#FFFFFF",
+        "bg_inset": "#EEF0F4", "border": "#D9DCE2", "input_bg": "#FFFFFF", "is_light": True,
         "text_pri": "#000000", "text_sec": "#6C6C70", "text_tert": "#AEAEB2",
         "msg_chat": "#1C1C1E", "msg_gift": "#FF9500", "msg_like": "#FF2D55",
         "msg_follow": "#AF52DE", "accent": "#007AFF", "accent_light": "#5AC8FA",
         "accent_text": "#FFFFFF", "green": "#34C759", "red": "#FF3B30", "yellow": "#FFCC00",
-        "bg_vibrancy": "#C8FFFFFF", "hairline": "#17000000", "selected_bg": "#2E007AFF",
+        "bg_vibrancy": "#E6FFFFFF", "hairline": "#12000000", "selected_bg": "#1F007AFF",
     },
 }
 
@@ -693,9 +693,9 @@ FONT_BODY      = _make_ui_font(11)
 FONT_BODY_EMPH = _make_ui_font(11, QFont.DemiBold)
 FONT_HEADLINE  = _make_ui_font(13, QFont.DemiBold)
 FONT_TITLE_2   = _make_ui_font(17, QFont.DemiBold)
-FONT_TITLE_2.setLetterSpacing(QFont.PercentageSpacing, 98)
+FONT_TITLE_2.setLetterSpacing(QFont.PercentageSpacing, 100)
 FONT_TITLE_1   = _make_ui_font(22, QFont.Bold)
-FONT_TITLE_1.setLetterSpacing(QFont.PercentageSpacing, 98)
+FONT_TITLE_1.setLetterSpacing(QFont.PercentageSpacing, 100)
 
 # Backward-compat aliases — existing imports of FONT_UI / FONT_TITLE keep working
 FONT_UI    = FONT_BODY
