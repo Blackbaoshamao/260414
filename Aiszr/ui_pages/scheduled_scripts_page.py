@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from siui.components.page import SiPage
+from fluent_page import FluentPage
 
 import ui_theme as theme
 from live_control_config import (
@@ -64,22 +64,7 @@ def _trash_icon(color: str) -> QIcon:
     return QIcon(pix)
 
 
-def _make_back_button(parent, back_signal) -> QWidget:
-    area = QWidget(parent)
-    area.setFixedSize(74, 34)
-    layout = QHBoxLayout(area)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(0)
-    btn = MacButton("返回", variant="secondary", parent=area)
-    btn.setFixedSize(68, 30)
-    btn.setToolTip("返回上一页")
-    btn.clicked.connect(back_signal.emit)
-    layout.addWidget(btn)
-    return area
-
-
-class ScheduledScriptsPage(SiPage):
-    back_requested = pyqtSignal()
+class ScheduledScriptsPage(FluentPage):
     settings_changed = pyqtSignal()
 
     def __init__(self, *args, **kwargs):
@@ -104,7 +89,8 @@ class ScheduledScriptsPage(SiPage):
         grid.setVerticalSpacing(theme.SPACING_MD)
         grid.setColumnStretch(0, 7)
         grid.setColumnStretch(1, 2)
-        grid.addWidget(self._build_scripts_card(), 0, 0, alignment=Qt.AlignTop)
+        grid.addWidget(self._build_scripts_card(), 0, 0)
+        grid.setRowStretch(0, 1)
 
         right_col = QVBoxLayout()
         right_col.setSpacing(10)
@@ -127,12 +113,6 @@ class ScheduledScriptsPage(SiPage):
         ly = QHBoxLayout(row)
         ly.setContentsMargins(14, 0, 14, 0)
         ly.setSpacing(12)
-        ly.addWidget(_make_back_button(self, self.back_requested))
-
-        self._hero_divider = QFrame(row)
-        self._hero_divider.setObjectName("ScheduledHeroDivider")
-        self._hero_divider.setFixedSize(1, 30)
-        ly.addWidget(self._hero_divider)
 
         title_wrap = QWidget(row)
         title_wrap.setStyleSheet("background: transparent;")
@@ -332,7 +312,7 @@ class ScheduledScriptsPage(SiPage):
         self._scripts_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scripts_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scripts_scroll.setStyleSheet(self._scroll_stylesheet())
-        body.addWidget(self._scripts_scroll)
+        body.addWidget(self._scripts_scroll, stretch=1)
         return card
 
     def _make_script_widget(self, text: str = "") -> tuple[QFrame, dict]:
@@ -382,7 +362,6 @@ class ScheduledScriptsPage(SiPage):
         self._scripts_layout.addWidget(card)
         self._script_widgets.append(widgets)
         self._refresh_summary()
-        self._update_scroll_height()
         self._set_dirty(True)
 
     def _delete_script(self, widgets: dict):
@@ -395,7 +374,6 @@ class ScheduledScriptsPage(SiPage):
         if not self._script_widgets:
             self._show_empty_card()
         self._refresh_summary()
-        self._update_scroll_height()
         self._set_dirty(True)
 
     def _clear_scripts(self):
@@ -482,7 +460,6 @@ class ScheduledScriptsPage(SiPage):
         if not self._script_widgets:
             self._show_empty_card()
         self._refresh_summary()
-        self._update_scroll_height()
         self._set_dirty(False)
 
     def load_live_control_settings(self, settings: dict | LiveControlSettings | None):
@@ -611,18 +588,6 @@ class ScheduledScriptsPage(SiPage):
             self._empty_card.deleteLater()
             self._empty_card = None
 
-    _CHROME_OFFSET = 198
-
-    def _update_scroll_height(self):
-        if not hasattr(self, "_scripts_scroll"):
-            return
-        sa = getattr(self, "scroll_area", None)
-        avail = sa.height() if sa is not None and sa.height() > 0 else 600
-        row_count = max(1, len(self._script_widgets))
-        desired = row_count * 116 + 16
-        max_height = max(260, avail - self._CHROME_OFFSET)
-        self._scripts_scroll.setFixedHeight(max(150, min(desired, max_height)))
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         sa = getattr(self, "scroll_area", None)
@@ -630,7 +595,6 @@ class ScheduledScriptsPage(SiPage):
             att = sa.attachment()
             if att is not None and att.height() != sa.height():
                 att.resize(att.width(), sa.height())
-        self._update_scroll_height()
 
     def _summary_stylesheet(self) -> str:
         bg = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_BG_CARD, 0.52)
@@ -696,10 +660,6 @@ class ScheduledScriptsPage(SiPage):
                 f"border-radius: {theme.RADIUS_LG}px;"
                 "}"
             )
-        if hasattr(self, "_hero_divider"):
-            self._hero_divider.setStyleSheet(
-                f"QFrame#ScheduledHeroDivider {{ background-color: {theme.CLR_HAIRLINE}; border: none; }}"
-            )
         if hasattr(self, "_hero_title_accent"):
             accent = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_TEXT_PRI, 0.06)
             self._hero_title_accent.setStyleSheet(
@@ -740,9 +700,9 @@ class ScheduledScriptsPage(SiPage):
             )
 
     def _apply_theme_styles(self):
-        self.setStyleSheet(f"SiPage {{ background-color: {theme.CLR_BG}; }}")
-        if hasattr(self, "scroll_area"):
-            self.scroll_area.setStyleSheet(
+        self.setStyleSheet(f"FluentPage {{ background-color: {theme.CLR_BG}; }}")
+        if hasattr(self, "_scroll"):
+            self._scroll.setStyleSheet(
                 f"QScrollArea {{ background-color: {theme.CLR_BG}; border: none; }}"
             )
         self._apply_hero_styles()

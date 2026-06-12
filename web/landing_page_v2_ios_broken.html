@@ -1,0 +1,1564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aiszr - AI 数字人直播平�?/title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #ffffff;
+            color: #1d1d1d;
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* ============ 导航�?============ */
+        header {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 5%;
+            backdrop-filter: blur(30px);
+            background: rgba(255, 255, 255, 0.7);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+            z-index: 1000;
+        }
+
+        .logo {
+            font-size: 1.6rem;
+            font-weight: 900;
+            letter-spacing: -0.8px;
+            color: #1d1d1d;
+            will-change: transform;
+        }
+
+        .logo span {
+            background: linear-gradient(135deg, #c09eff 0%, #9b6bb6 50%, #d4a574 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            background-size: 300% 100%;
+            animation: logoGlow 6s ease-in-out infinite;
+        }
+
+        @keyframes logoGlow {
+            0%, 100% { background-position: 0% center; }
+            50% { background-position: 100% center; }
+        }
+
+        nav {
+            display: flex;
+            gap: 3.5rem;
+        }
+
+        nav a {
+            color: #666666;
+            text-decoration: none;
+            font-size: 0.95rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            position: relative;
+            will-change: color;
+        }
+
+        nav a::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 0;
+            width: 0;
+            height: 2.5px;
+            background: linear-gradient(135deg, #c09eff, #d4a574);
+            transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            border-radius: 2px;
+        }
+
+        nav a:hover {
+            color: #8B5CF6;
+        }
+
+        nav a:hover::after {
+            width: 100%;
+        }
+
+        /* ============ Hero Section ============ */
+        .hero {
+            margin-top: 72px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            padding: 80px 5%;
+            background: linear-gradient(180deg, #ffffff 0%, #f5f5f7 50%, #ffffff 100%);
+        }
+
+        /* 多彩背景光晕 */
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: 1200px;
+            height: 1200px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.12), transparent);
+            border-radius: 50%;
+            top: -300px;
+            right: -200px;
+            filter: blur(100px);
+            will-change: transform;
+            animation: glow-pulse 8s ease-in-out infinite;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            width: 900px;
+            height: 900px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1), transparent);
+            border-radius: 50%;
+            bottom: -200px;
+            left: -300px;
+            filter: blur(100px);
+            animation: glow-pulse-alt 10s ease-in-out infinite;
+        }
+
+        @keyframes glow-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        @keyframes glow-pulse-alt {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(0.95); }
+        }
+
+        .hero-glow-extra {
+            position: absolute;
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.08), transparent);
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            filter: blur(120px);
+            pointer-events: none;
+            animation: glow-float 12s ease-in-out infinite;
+        }
+
+        @keyframes glow-float {
+            0%, 100% { transform: translate(-50%, -50%) translateY(0px); }
+            50% { transform: translate(-50%, -50%) translateY(30px); }
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            max-width: 900px;
+            will-change: transform;
+            text-align: center;
+        }
+
+        .hero-tag {
+            display: inline-block;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(59, 130, 246, 0.08));
+            border: 1.5px solid rgba(139, 92, 246, 0.4);
+            color: #8B5CF6;
+            padding: 0.7rem 1.5rem;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 800;
+            margin-bottom: 2rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            backdrop-filter: blur(20px);
+            will-change: transform, opacity;
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.1);
+        }
+
+        .hero h1 {
+            font-size: 5.5rem;
+            font-weight: 900;
+            line-height: 1.1;
+            margin-bottom: 2rem;
+            letter-spacing: -2px;
+            color: #1d1d1d;
+            will-change: transform, opacity;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 30%, #6366F1 60%, #3B82F6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            background-size: 400% 100%;
+            animation: textGlow 8s ease-in-out infinite;
+        }
+
+        @keyframes textGlow {
+            0%, 100% { background-position: 0% center; }
+            50% { background-position: 100% center; }
+        }
+
+        .hero p {
+            font-size: 1.3rem;
+            color: #555555;
+            margin-bottom: 3rem;
+            line-height: 1.9;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+            will-change: transform, opacity;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1.8rem;
+            align-items: center;
+            flex-wrap: wrap;
+            will-change: transform;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 1.1rem 3rem;
+            border: none;
+            border-radius: 50px;
+            font-size: 1.05rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+            letter-spacing: 0.4px;
+            position: relative;
+            overflow: hidden;
+            will-change: transform, box-shadow;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #8B5CF6, #7C3AED);
+            color: #fff;
+            box-shadow: 0 12px 48px rgba(139, 92, 246, 0.35);
+            font-weight: 900;
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.4);
+            transition: left 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 20px 60px rgba(139, 92, 246, 0.6);
+        }
+
+        .btn-primary:hover::before {
+            left: 100%;
+        }
+
+        .btn-secondary {
+            background: rgba(0, 0, 0, 0.05);
+            color: #1d1d1d;
+            border: 2px solid rgba(139, 92, 246, 0.3);
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.08);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(139, 92, 246, 0.08);
+            border-color: rgba(139, 92, 246, 0.7);
+            transform: translateY(-5px);
+            box-shadow: 0 16px 48px rgba(139, 92, 246, 0.2);
+        }
+
+        /* ============ Icon Styles ============ */
+        .icon-wrapper {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, rgba(192, 158, 255, 0.15), rgba(155, 107, 182, 0.08));
+            border: 2px solid rgba(192, 158, 255, 0.25);
+            border-radius: 24px;
+            margin-bottom: 1.8rem;
+            font-size: 2.2rem;
+            color: #c09eff;
+            transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            will-change: transform, box-shadow, color;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.1);
+        }
+
+        .feature-card:hover .icon-wrapper {
+            background: linear-gradient(135deg, rgba(192, 158, 255, 0.25), rgba(212, 165, 116, 0.1));
+            border-color: rgba(192, 158, 255, 0.6);
+            transform: translateY(-12px) scale(1.12) rotateZ(-5deg);
+            box-shadow: 0 16px 48px rgba(192, 158, 255, 0.3);
+            color: #d4a574;
+        }
+
+        .use-case-icon-wrapper {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 90px;
+            height: 90px;
+            background: linear-gradient(135deg, rgba(192, 158, 255, 0.12), rgba(155, 107, 182, 0.06));
+            border: 2px solid rgba(192, 158, 255, 0.25);
+            border-radius: 26px;
+            margin-bottom: 1.8rem;
+            font-size: 2.5rem;
+            color: #c09eff;
+            transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            will-change: transform, box-shadow, color;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.1);
+        }
+
+        .use-case-card:hover .use-case-icon-wrapper {
+            background: linear-gradient(135deg, rgba(6, 182, 212, 0.12), rgba(139, 92, 246, 0.1));
+            border-color: rgba(6, 182, 212, 0.5);
+            transform: translateY(-14px) scale(1.15) rotateZ(8deg);
+            box-shadow: 0 20px 60px rgba(6, 182, 212, 0.3);
+            color: #06B6D4;
+        }
+
+        /* ============ Features Section ============ */
+        .features {
+            padding: 9rem 5% 8rem;
+            position: relative;
+            background: linear-gradient(180deg, rgba(139, 92, 246, 0.02), rgba(59, 130, 246, 0.01), rgba(255, 255, 255, 0));
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 5.5rem;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .section-tag {
+            display: inline-block;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(59, 130, 246, 0.08));
+            border: 1.5px solid rgba(139, 92, 246, 0.3);
+            color: #8B5CF6;
+            padding: 0.6rem 1.3rem;
+            border-radius: 50px;
+            font-size: 0.8rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            backdrop-filter: blur(15px);
+            will-change: transform, opacity;
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.08);
+        }
+
+        .section-title {
+            font-size: 3.8rem;
+            font-weight: 900;
+            margin-bottom: 1.3rem;
+            letter-spacing: -1.5px;
+            color: #1d1d1d;
+            will-change: transform, opacity;
+        }
+
+        .section-desc {
+            font-size: 1.15rem;
+            color: #555555;
+            line-height: 1.9;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 2.8rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .feature-card {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(59, 130, 246, 0.04));
+            border: 2px solid rgba(139, 92, 246, 0.15);
+            border-radius: 28px;
+            padding: 3.5rem 3rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+            will-change: transform, box-shadow, background;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.08);
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 350px;
+            height: 350px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.2), transparent);
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.6s ease;
+        }
+
+        .feature-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), transparent);
+            opacity: 0;
+            transition: opacity 0.6s ease;
+            border-radius: 28px;
+        }
+
+        .feature-card:hover {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(59, 130, 246, 0.1));
+            border-color: rgba(139, 92, 246, 0.45);
+            transform: translateY(-16px);
+            box-shadow: 0 28px 80px rgba(139, 92, 246, 0.25);
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
+        }
+
+        .feature-card:hover::after {
+            opacity: 1;
+        }
+
+        .feature-card h3 {
+            font-size: 1.5rem;
+            font-weight: 900;
+            margin-bottom: 1rem;
+            color: #1d1d1d;
+            letter-spacing: -0.5px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .feature-card p {
+            color: #555555;
+            font-size: 0.98rem;
+            line-height: 1.85;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* ============ Stats Section ============ */
+        .stats {
+            padding: 7rem 5%;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.02), rgba(6, 182, 212, 0.01));
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 3.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .stat-box {
+            text-align: center;
+            padding: 2.5rem;
+            position: relative;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(99, 102, 241, 0.04));
+            border: 2px solid rgba(139, 92, 246, 0.15);
+            border-radius: 24px;
+            backdrop-filter: blur(15px);
+            transition: all 0.5s ease;
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.08);
+        }
+
+        .stat-box:hover {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(6, 182, 212, 0.1));
+            border-color: rgba(139, 92, 246, 0.4);
+            transform: translateY(-8px);
+            box-shadow: 0 16px 48px rgba(139, 92, 246, 0.2);
+        }
+
+        .stat-box::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #8B5CF6, transparent);
+            will-change: width;
+            transition: width 0.6s ease;
+        }
+
+        .stat-box:hover::before {
+            width: 80%;
+        }
+
+        .stat-number {
+            font-size: 4rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, #8B5CF6, #00ffff, #06B6D4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            background-size: 300% 100%;
+            margin-bottom: 0.8rem;
+            letter-spacing: -1px;
+            will-change: transform;
+            animation: statFloat 3s ease-in-out infinite;
+        }
+
+        @keyframes statFloat {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-5px); }
+        }
+
+        .stat-label {
+            color: #c0c0c0;
+            font-size: 0.98rem;
+            font-weight: 700;
+        }
+
+        /* ============ Pricing Section ============ */
+        .pricing {
+            padding: 9rem 5% 8rem;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(139, 92, 246, 0.02), rgba(0, 0, 0, 0));
+        }
+
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2.8rem;
+            max-width: 1100px;
+            margin: 0 auto;
+            margin-top: 3.5rem;
+        }
+
+        .pricing-card {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(99, 102, 241, 0.04));
+            border: 2px solid rgba(139, 92, 246, 0.15);
+            border-radius: 28px;
+            padding: 3rem;
+            position: relative;
+            transition: all 0.6s ease;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.08);
+        }
+
+        .pricing-card.featured {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(6, 182, 212, 0.08));
+            border-color: rgba(139, 92, 246, 0.4);
+            transform: scale(1.05);
+            box-shadow: 0 16px 64px rgba(139, 92, 246, 0.25);
+        }
+
+        .pricing-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 16px 48px rgba(139, 92, 246, 0.2);
+        }
+
+        .pricing-card.featured:hover {
+            transform: scale(1.05) translateY(-8px);
+            box-shadow: 0 24px 80px rgba(139, 92, 246, 0.3);
+        }
+
+        .pricing-title {
+            font-size: 1.5rem;
+            font-weight: 900;
+            margin-bottom: 0.8rem;
+            color: #fff;
+        }
+
+        .pricing-price {
+            font-size: 3rem;
+            font-weight: 900;
+            color: #8B5CF6;
+            margin-bottom: 1.5rem;
+        }
+
+        .pricing-desc {
+            color: #c0c0c0;
+            font-size: 0.9rem;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+
+        .pricing-features {
+            list-style: none;
+            margin-bottom: 2rem;
+        }
+
+        .pricing-features li {
+            color: #b0b0b0;
+            font-size: 0.95rem;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid rgba(139, 92, 246, 0.08);
+        }
+
+        .pricing-features li:before {
+            content: '�?';
+            color: #8B5CF6;
+            font-weight: 800;
+            margin-right: 0.8rem;
+        }
+
+        /* ============ Workflow Section ============ */
+        .workflow {
+            padding: 9rem 5%;
+            position: relative;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(6, 182, 212, 0.01), rgba(0, 0, 0, 0));
+        }
+
+        .workflow-container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .workflow-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5rem;
+            align-items: center;
+        }
+
+        .workflow-left {
+            position: relative;
+        }
+
+        .workflow-left h3 {
+            font-size: 0.9rem;
+            color: #8B5CF6;
+            font-weight: 900;
+            letter-spacing: 1.5px;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+        }
+
+        .workflow-left h2 {
+            font-size: 3.2rem;
+            font-weight: 900;
+            margin-bottom: 1.8rem;
+            line-height: 1.2;
+            letter-spacing: -1px;
+        }
+
+        .workflow-left p {
+            color: #c0c0c0;
+            font-size: 1.1rem;
+            line-height: 1.85;
+            margin-bottom: 2.5rem;
+        }
+
+        .workflow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 1.3rem;
+        }
+
+        .workflow-step {
+            display: flex;
+            gap: 1.8rem;
+            padding: 2.2rem;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(99, 102, 241, 0.04));
+            border: 2px solid rgba(139, 92, 246, 0.15);
+            border-radius: 22px;
+            transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            will-change: transform, box-shadow;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.08);
+        }
+
+        .workflow-step:hover {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(6, 182, 212, 0.08));
+            border-color: rgba(139, 92, 246, 0.35);
+            transform: translateX(16px);
+            box-shadow: 0 16px 48px rgba(139, 92, 246, 0.2);
+        }
+
+        .step-number {
+            min-width: 50px;
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #8B5CF6, #06B6D4);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            color: #000;
+            flex-shrink: 0;
+            font-size: 1.1rem;
+            will-change: transform;
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.25);
+        }
+
+        .step-content h4 {
+            font-weight: 900;
+            margin-bottom: 0.4rem;
+            color: #fff;
+        }
+
+        .step-content p {
+            font-size: 0.92rem;
+            color: #c0c0c0;
+        }
+
+        .workflow-visual {
+            position: relative;
+            height: 550px;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(6, 182, 212, 0.06));
+            border: 2px solid rgba(139, 92, 246, 0.15);
+            border-radius: 32px;
+            padding: 3.5rem 2.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 1.5rem;
+            backdrop-filter: blur(15px);
+            overflow: hidden;
+            box-shadow: 0 16px 48px rgba(139, 92, 246, 0.12);
+        }
+
+        .workflow-visual::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.15), transparent);
+            border-radius: 50%;
+            filter: blur(80px);
+        }
+
+        .visual-item {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(99, 102, 241, 0.06));
+            border: 2px solid rgba(139, 92, 246, 0.2);
+            width: 100%;
+            max-width: 300px;
+            padding: 2rem;
+            border-radius: 20px;
+            text-align: center;
+            font-weight: 800;
+            color: #c0c0c0;
+            position: relative;
+            z-index: 1;
+            will-change: transform;
+            backdrop-filter: blur(10px);
+            transition: all 0.4s ease;
+        }
+
+        .visual-item:hover {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(6, 182, 212, 0.08));
+            border-color: rgba(139, 92, 246, 0.4);
+            transform: scale(1.05);
+        }
+
+        .visual-arrow {
+            font-size: 1.8rem;
+            color: #8B5CF6;
+            will-change: transform;
+            animation: arrow-bounce 2s ease-in-out infinite;
+        }
+
+        @keyframes arrow-bounce {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(8px); }
+        }
+
+        /* ============ Use Cases Section ============ */
+        .use-cases {
+            padding: 9rem 5% 8rem;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(139, 92, 246, 0.02), rgba(0, 0, 0, 0));
+        }
+
+        .use-case-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+            gap: 2.8rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            margin-top: 3.5rem;
+        }
+
+        .use-case-card {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(6, 182, 212, 0.04));
+            border: 2px solid rgba(139, 92, 246, 0.15);
+            border-radius: 28px;
+            padding: 3.5rem 3rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+            will-change: transform, box-shadow;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.08);
+        }
+
+        .use-case-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 350px;
+            height: 350px;
+            background: radial-gradient(circle, rgba(6, 182, 212, 0.2), transparent);
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.6s ease;
+        }
+
+        .use-case-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), transparent);
+            opacity: 0;
+            transition: opacity 0.6s ease;
+            border-radius: 28px;
+        }
+
+        .use-case-card:hover {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.14), rgba(6, 182, 212, 0.1));
+            border-color: rgba(6, 182, 212, 0.4);
+            transform: translateY(-16px);
+            box-shadow: 0 28px 80px rgba(6, 182, 212, 0.25);
+        }
+
+        .use-case-card:hover::before {
+            opacity: 1;
+        }
+
+        .use-case-card:hover::after {
+            opacity: 1;
+        }
+
+        .use-case-card h3 {
+            font-size: 1.4rem;
+            font-weight: 900;
+            margin-bottom: 1rem;
+            color: #fff;
+            position: relative;
+            z-index: 2;
+        }
+
+        .use-case-card p {
+            color: #c0c0c0;
+            font-size: 0.95rem;
+            line-height: 1.8;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* ============ CTA Section ============ */
+        .cta-section {
+            padding: 11rem 5%;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, #05050a 0%, #0a1428 40%, #050a20 100%);
+        }
+
+        .cta-section::before {
+            content: '';
+            position: absolute;
+            width: 1400px;
+            height: 1400px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.2), transparent);
+            border-radius: 50%;
+            top: -400px;
+            right: -400px;
+            filter: blur(120px);
+            will-change: transform;
+            animation: glow-pulse 8s ease-in-out infinite;
+        }
+
+        .cta-section::after {
+            content: '';
+            position: absolute;
+            width: 1000px;
+            height: 1000px;
+            background: radial-gradient(circle, rgba(6, 182, 212, 0.15), transparent);
+            border-radius: 50%;
+            bottom: -300px;
+            left: -400px;
+            filter: blur(120px);
+            animation: glow-pulse-alt 10s ease-in-out infinite;
+        }
+
+        .cta-content {
+            position: relative;
+            z-index: 10;
+            max-width: 900px;
+            margin: 0 auto;
+            will-change: transform, opacity;
+        }
+
+        .cta-section h2 {
+            font-size: 4.2rem;
+            font-weight: 900;
+            margin-bottom: 1.8rem;
+            letter-spacing: -1.5px;
+            line-height: 1.2;
+        }
+
+        .cta-section h2 span {
+            background: linear-gradient(135deg, #8B5CF6, #06B6D4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .cta-section p {
+            font-size: 1.35rem;
+            color: #d0d0d0;
+            margin-bottom: 4rem;
+            line-height: 1.95;
+        }
+
+        /* ============ Footer ============ */
+        footer {
+            padding: 5rem 5%;
+            border-top: 1.5px solid rgba(139, 92, 246, 0.1);
+            text-align: center;
+            color: #808080;
+            font-size: 0.95rem;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: #b0b0b0;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        .footer-links a:hover {
+            color: #8B5CF6;
+        }
+
+        /* ============ Responsive ============ */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 3.5rem;
+            }
+
+            .hero p {
+                font-size: 1.1rem;
+            }
+
+            .section-title {
+                font-size: 2.4rem;
+            }
+
+            .workflow-content {
+                grid-template-columns: 1fr;
+                gap: 2.5rem;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .use-case-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .pricing-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .pricing-card.featured {
+                transform: scale(1);
+            }
+
+            nav {
+                gap: 1.5rem;
+                font-size: 0.85rem;
+            }
+
+            .hero-buttons {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 350px;
+            }
+
+            .cta-section h2 {
+                font-size: 2.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 导航�?-->
+    <header>
+        <div class="logo">Aiszr<span>.</span></div>
+        <nav>
+            <a href="#features">功能</a>
+            <a href="#pricing">价格</a>
+            <a href="#workflow">工作�?/a>
+            <a href="#use-cases">场景</a>
+        </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-glow-extra"></div>
+        <div class="hero-content">
+            <div class="hero-tag">�?AI 直播革命</div>
+            <h1>数字�?span>实时互动</span>，直�?span>带货</span>新高�?/h1>
+            <p>智能回复 + 数字人合�?+ OBS 联动 + RTMP 推流。用 AI 力量重新定义直播间自动化�?/p>
+            <div class="hero-buttons">
+                <button class="btn btn-primary">立即开�?/button>
+                <button class="btn btn-secondary">查看演示</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="section-header">
+            <div class="section-tag">核心能力</div>
+            <h2 class="section-title">强大的功能组�?/h2>
+            <p class="section-desc">从弹幕抓取到直播推流，完整的直播自动化解决方�?/p>
+        </div>
+
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-brain"></i>
+                </div>
+                <h3>AI 智能回复</h3>
+                <p>接入 DeepSeek 大模型，实时分析弹幕，生成自然流畅的互动回复。支持话术库、冷却节流、用户分级�?/p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-video"></i>
+                </div>
+                <h3>数字人合�?/h3>
+                <p>AI 语音合成 + 绿幕视频，一体化生成数字人视频。支持口型同步、表情管理、多风格切换�?/p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-comments"></i>
+                </div>
+                <h3>弹幕实时抓取</h3>
+                <p>基于 Playwright 的稳定方案，<90ms 延迟捕获弹幕、礼物、关注等数据。支持多平台、多房间�?/p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-link"></i>
+                </div>
+                <h3>OBS 关键词联�?/h3>
+                <p>自动检测关键词触发 OBS 动作。支持场景切换、音乐播放、特效触发、弹幕互动墙�?/p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-broadcast-tower"></i>
+                </div>
+                <h3>HLS 推流</h3>
+                <p>FFmpeg + RTMP 高效推流，无缝集�?OBS。支持视频号、抖音、快手等主流平台直播�?/p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon-wrapper">
+                    <i class="fas fa-server"></i>
+                </div>
+                <h3>本地部署</h3>
+                <p>完全本地运行，无云依赖。Python 3.10+ 开箱即用，隐私安全完全可控，支持私有化部署�?/p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section class="stats">
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-number">90%+</div>
+                <div class="stat-label">弹幕捕获精度</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number">&lt;90ms</div>
+                <div class="stat-label">端到端延�?/div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number">24/7</div>
+                <div class="stat-label">稳定运行</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number">5000+</div>
+                <div class="stat-label">并发直播�?/div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section class="pricing" id="pricing">
+        <div class="section-header">
+            <div class="section-tag">简单透明</div>
+            <h2 class="section-title">灵活的定价方�?/h2>
+            <p class="section-desc">为不同规模的直播团队提供定制方案</p>
+        </div>
+
+        <div class="pricing-grid">
+            <div class="pricing-card">
+                <h3 class="pricing-title">个人�?/h3>
+                <div class="pricing-price">免费</div>
+                <p class="pricing-desc">个人主播入门方案</p>
+                <ul class="pricing-features">
+                    <li>支持 1 个直播间</li>
+                    <li>AI 智能回复（每�?100 次）</li>
+                    <li>基础数据分析</li>
+                    <li>社区支持</li>
+                </ul>
+                <button class="btn btn-secondary">开始使�?/button>
+            </div>
+
+            <div class="pricing-card featured">
+                <h3 class="pricing-title">专业�?/h3>
+                <div class="pricing-price">¥299<span style="font-size: 0.5em; color: #c0c0c0;">/�?/span></div>
+                <p class="pricing-desc">电商团队首选方�?/p>
+                <ul class="pricing-features">
+                    <li>支持 5 个直播间</li>
+                    <li>AI 智能回复（无限次�?/li>
+                    <li>数字人合成能�?/li>
+                    <li>OBS 高级联动</li>
+                    <li>优先技术支�?/li>
+                    <li>自定义话术库</li>
+                </ul>
+                <button class="btn btn-primary">立即订阅</button>
+            </div>
+
+            <div class="pricing-card">
+                <h3 class="pricing-title">企业�?/h3>
+                <div class="pricing-price">定制</div>
+                <p class="pricing-desc">大型运营团队方案</p>
+                <ul class="pricing-features">
+                    <li>无限直播�?/li>
+                    <li>全部功能解锁</li>
+                    <li>专属账户经理</li>
+                    <li>私有化部�?/li>
+                    <li>API 接口</li>
+                    <li>SLA 保障</li>
+                </ul>
+                <button class="btn btn-secondary">联系销�?/button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Workflow Section -->
+    <section class="workflow" id="workflow">
+        <div class="workflow-container">
+            <div class="section-header" style="margin-bottom: 5rem;">
+                <div class="section-tag">完整流程</div>
+                <h2 class="section-title">8 步智能工作流</h2>
+            </div>
+
+            <div class="workflow-content">
+                <div class="workflow-left">
+                    <h3>完整的自动化链路</h3>
+                    <h2>端到端解决方�?/h2>
+                    <p>从直播间登录到数据观测，每一步都是自动化的、智能的、可靠的。不需要人工干预，AI 会自动处理一切�?/p>
+
+                    <div class="workflow-steps">
+                        <div class="workflow-step">
+                            <div class="step-number">1</div>
+                            <div class="step-content">
+                                <h4>登录直播�?/h4>
+                                <p>Playwright 自动化，支持多平�?/p>
+                            </div>
+                        </div>
+                        <div class="workflow-step">
+                            <div class="step-number">2</div>
+                            <div class="step-content">
+                                <h4>实时抓弹�?/h4>
+                                <p>WebSocket 拦截�?90ms 延迟</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step">
+                            <div class="step-number">3</div>
+                            <div class="step-content">
+                                <h4>AI 智能分析</h4>
+                                <p>DeepSeek 大模型，理解意图</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step">
+                            <div class="step-number">4</div>
+                            <div class="step-content">
+                                <h4>语音合成</h4>
+                                <p>高保�?TTS，多种音�?/p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="workflow-visual">
+                    <div class="visual-item"><i class="fas fa-door-open"></i> 直播间登�?/div>
+                    <div class="visual-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="visual-item"><i class="fas fa-comments"></i> 实时抓弹�?/div>
+                    <div class="visual-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="visual-item"><i class="fas fa-microchip"></i> AI 智能分析</div>
+                    <div class="visual-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="visual-item"><i class="fas fa-wave-square"></i> RTMP 推流</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Use Cases Section -->
+    <section class="use-cases" id="use-cases">
+        <div class="section-header">
+            <div class="section-tag">应用场景</div>
+            <h2 class="section-title">适配多种直播场景</h2>
+        </div>
+
+        <div class="use-case-grid">
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-shopping-cart"></i>
+                </div>
+                <h3>直播带货</h3>
+                <p>数字人实时互动，关键词自动触发优惠，精准回应用户提问，提升转化率 50%+�?/p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-gamepad"></i>
+                </div>
+                <h3>游戏直播</h3>
+                <p>AI 助播实时互动，自动跟评高价值用户，关键词触发游戏内事件�?/p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-book"></i>
+                </div>
+                <h3>教育直播</h3>
+                <p>数字讲师自动答疑，关键词触发知识点回放，实时生成互动练习�?/p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-microphone"></i>
+                </div>
+                <h3>娱乐直播</h3>
+                <p>虚拟主播实时互动，自动生成笑点回应，OBS 联动特效和音乐�?/p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-building"></i>
+                </div>
+                <h3>企业发布�?/h3>
+                <p>数字化主持人，实时播报提问，多平台同步直播，增强品牌影响�?/p>
+            </div>
+
+            <div class="use-case-card">
+                <div class="use-case-icon-wrapper">
+                    <i class="fas fa-star"></i>
+                </div>
+                <h3>粉丝运营</h3>
+                <p>自动识别重要粉丝，精准互动，数据沉淀用户画像，构建粘性�?/p>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section" id="contact">
+        <div class="cta-content">
+            <h2>准备好开�?span>直播新时�?/span>�?/h2>
+            <p>加入数百位直播主和电商达人的阵营，用 AI 力量提升直播�?ROI</p>
+            <div style="display: flex; gap: 1.5rem; justify-content: center; flex-wrap: wrap;">
+                <button class="btn btn-primary">立即开始使�?/button>
+                <button class="btn btn-secondary">联系我们</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-links">
+            <a href="#">关于我们</a>
+            <a href="#">隐私政策</a>
+            <a href="#">服务条款</a>
+            <a href="#">文档</a>
+            <a href="#">联系方式</a>
+        </div>
+        <p>© 2026 Aiszr. All rights reserved. | �?AI 驱动的直播互动未�?/p>
+    </footer>
+
+    <!-- GSAP Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/Draggable.min.js"></script>
+    <script>
+        gsap.registerPlugin(ScrollTrigger);
+
+        // ============ Hero Timeline ============
+        const heroTl = gsap.timeline({ defaults: { force3D: true } });
+        heroTl
+            .from(".hero-tag", { opacity: 0, y: 40, x: -30, duration: 0.8, ease: "cubic.out" }, 0)
+            .from(".hero h1", { opacity: 0, y: 80, duration: 1, ease: "back.out(1.3)" }, 0.2)
+            .from(".hero p", { opacity: 0, y: 50, duration: 0.8, ease: "cubic.out" }, 0.4)
+            .from(".hero-buttons .btn", { opacity: 0, y: 40, scale: 0.8, stagger: { amount: 0.3, from: "start", ease: "back.out(1.5)" }, duration: 0.8 }, 0.6);
+
+        // ============ Features Cards - Radial Stagger ============
+        gsap.utils.toArray(".feature-card").forEach((card, i) => {
+            const totalCards = 6;
+            const colCount = 3;
+            const row = Math.floor(i / colCount);
+            const col = i % colCount;
+            const centerCol = 1;
+            const distFromCenter = Math.abs(col - centerCol) + row * 0.4;
+
+            gsap.from(card, {
+                opacity: 0,
+                y: 100,
+                scale: 0.6,
+                rotation: -15 + i * 2,
+                duration: 1,
+                delay: distFromCenter * 0.12,
+                ease: "elastic.out(1, 0.6)",
+                force3D: true,
+                scrollTrigger: {
+                    trigger: card,
+                    start: "top 85%",
+                    once: true
+                }
+            });
+        });
+
+        // ============ Stats Counter Animation ============
+        gsap.utils.toArray(".stat-box").forEach((box, i) => {
+            const statNumber = box.querySelector(".stat-number");
+            const originalText = statNumber.textContent;
+            let isNumeric = /^\d+/.test(originalText);
+
+            if (isNumeric) {
+                const numericPart = parseInt(originalText.replace(/\D/g, ""));
+                gsap.from(box, {
+                    opacity: 0,
+                    y: 50,
+                    duration: 0.8,
+                    delay: i * 0.15,
+                    ease: "power2.out",
+                    scrollTrigger: {
+                        trigger: box,
+                        start: "top 80%",
+                        once: true
+                    },
+                    onComplete: () => {
+                        gsap.to(statNumber, {
+                            textContent: numericPart,
+                            duration: 2.5,
+                            snap: { textContent: 1 },
+                            ease: "power2.out"
+                        });
+                    }
+                });
+            }
+
+            gsap.to(box.querySelector("::before"), {
+                width: "80%",
+                duration: 0.8,
+                delay: i * 0.15,
+                ease: "power2.out",
+                scrollTrigger: {
+                    trigger: box,
+                    start: "top 80%",
+                    once: true
+                }
+            });
+        });
+
+        // ============ Workflow Steps ============
+        gsap.utils.toArray(".workflow-step").forEach((step, i) => {
+            gsap.from(step, {
+                opacity: 0,
+                x: -60,
+                rotation: -5,
+                duration: 0.8,
+                delay: i * 0.15,
+                ease: "back.out(1.5)",
+                force3D: true,
+                scrollTrigger: {
+                    trigger: step,
+                    start: "top 85%",
+                    once: true
+                }
+            });
+        });
+
+        // ============ Use Case Cards - Radial Distribution ============
+        gsap.utils.toArray(".use-case-card").forEach((card, i) => {
+            const totalCards = gsap.utils.toArray(".use-case-card").length;
+            const angle = (i / totalCards) * Math.PI * 2;
+            const distance = 30;
+            const offsetX = Math.cos(angle) * distance;
+            const offsetY = Math.sin(angle) * distance;
+
+            gsap.from(card, {
+                opacity: 0,
+                x: offsetX,
+                y: offsetY,
+                scale: 0.6,
+                rotation: angle * 20,
+                duration: 0.9,
+                delay: (i % 3) * 0.12,
+                ease: "elastic.out(1, 0.5)",
+                force3D: true,
+                scrollTrigger: {
+                    trigger: card,
+                    start: "top 85%",
+                    once: true
+                }
+            });
+        });
+
+        // ============ CTA Section ============
+        gsap.from(".cta-content", {
+            opacity: 0,
+            y: 100,
+            scale: 0.9,
+            duration: 1,
+            ease: "back.out(1.2)",
+            force3D: true,
+            scrollTrigger: {
+                trigger: ".cta-section",
+                start: "top 70%",
+                once: true
+            }
+        });
+
+        // ============ CTA Button Pulse ============
+        const ctaButtons = gsap.utils.toArray(".cta-section .btn");
+        ctaButtons.forEach(btn => {
+            gsap.to(btn, {
+                boxShadow: [
+                    "0 12px 48px rgba(139, 92, 246, 0.35)",
+                    "0 8px 32px rgba(139, 92, 246, 0.25)"
+                ],
+                duration: 2.5,
+                repeat: -1,
+                yoyo: true,
+                ease: "sine.inOut"
+            });
+        });
+
+        // ============ Navigation Smooth Scroll ============
+        gsap.utils.toArray("nav a").forEach(link => {
+            link.addEventListener("click", function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute("href"));
+                if (target) {
+                    gsap.to(window, {
+                        scrollTo: { y: target, offsetY: 72 },
+                        duration: 1.2,
+                        ease: "power3.inOut"
+                    });
+                }
+            });
+        });
+
+        // ============ Pricing Cards Hover ============
+        gsap.utils.toArray(".pricing-card").forEach(card => {
+            card.addEventListener("mouseenter", function() {
+                gsap.to(this, {
+                    y: -12,
+                    duration: 0.4,
+                    ease: "power2.out",
+                    overwrite: "auto"
+                });
+            });
+            card.addEventListener("mouseleave", function() {
+                gsap.to(this, {
+                    y: 0,
+                    duration: 0.4,
+                    ease: "power2.out",
+                    overwrite: "auto"
+                });
+            });
+        });
+
+        // ============ Workflow Visual Items ============
+        gsap.utils.toArray(".visual-item").forEach((item, i) => {
+            gsap.from(item, {
+                opacity: 0,
+                scale: 0.5,
+                y: -30,
+                duration: 0.8,
+                delay: i * 0.15,
+                ease: "back.out(1.3)",
+                scrollTrigger: {
+                    trigger: ".workflow-visual",
+                    start: "top 75%",
+                    once: true
+                }
+            });
+        });
+
+        // ============ Pricing Cards ============
+        gsap.utils.toArray(".pricing-card").forEach((card, i) => {
+            gsap.from(card, {
+                opacity: 0,
+                y: 80,
+                scale: 0.7,
+                duration: 0.9,
+                delay: i * 0.18,
+                ease: "back.out(1.2)",
+                scrollTrigger: {
+                    trigger: card,
+                    start: "top 85%",
+                    once: true
+                }
+            });
+        });
+    </script>
+</body>
+</html>

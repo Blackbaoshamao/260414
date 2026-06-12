@@ -5,7 +5,13 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QBrush, QIcon
 from PyQt5.QtCore import Qt, QPointF, QPropertyAnimation, QEasingCurve, QRect, QSize, \
     pyqtProperty
 from PyQt5.QtWidgets import QApplication, QLineEdit, QWidget, QAbstractButton
-from siui.core import SiColor, SiGlobal
+
+# qfluentwidgets theme integration
+try:
+    from qfluentwidgets import qconfig, Theme, setTheme, isDarkTheme
+    _HAS_QFW = True
+except ImportError:
+    _HAS_QFW = False
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +111,7 @@ SiSwitch = _iOSToggle
 # ---------------------------------------------------------------------------
 
 # Spacing & radius scale tuned for a restrained iOS control-center feel.
-RADIUS_SM, RADIUS_MD, RADIUS_LG, RADIUS_XL = 5, 7, 8, 12
+RADIUS_SM, RADIUS_MD, RADIUS_LG, RADIUS_XL = 8, 10, 14, 18
 SPACING_XS, SPACING_SM, SPACING_MD, SPACING_LG, SPACING_XL = 4, 8, 12, 18, 28
 
 # ARGB notation #AARRGGBB. bg_vibrancy α=184 (72%), hairline α=23 (~9%), selected_bg α=46 (~18%)
@@ -118,6 +124,7 @@ _THEMES = {
         "msg_follow": "#AF52DE", "accent": "#007AFF", "accent_light": "#5AC8FA",
         "accent_text": "#FFFFFF", "green": "#34C759", "red": "#FF3B30", "yellow": "#FFCC00",
         "bg_vibrancy": "#E6FFFFFF", "hairline": "#12000000", "selected_bg": "#1F007AFF",
+        "bg_card_hover": "#F0F0F5",
     },
 }
 
@@ -232,122 +239,15 @@ def _placeholder_h(height: int) -> QWidget:
     return w
 
 
-def _update_siui_color_group(theme: dict):
-    from siui.gui.color_group.bright import BrightColorGroup
-    from siui.gui.color_group.dark import DarkColorGroup
-
-    base_group = BrightColorGroup() if theme.get("is_light") else DarkColorGroup()
-    current_group = getattr(SiGlobal.siui, "colors", None)
-
-    if current_group is None:
-        SiGlobal.siui.colors = base_group
-        current_group = SiGlobal.siui.colors
-    else:
-        current_group.colors = dict(base_group.colors)
-
-    bg = theme["bg"]
-    bg_elevated = theme["bg_elevated"]
-    bg_card = theme["bg_card"]
-    border = theme["border"]
-    input_bg = theme["input_bg"]
-    text_pri = theme["text_pri"]
-    text_sec = theme["text_sec"]
-    text_tert = theme["text_tert"]
-    accent = theme["accent"]
-    accent_light = theme["accent_light"]
-    accent_text = theme["accent_text"]
-
-    current_group.assign(SiColor.THEME, accent)
-    current_group.assign(SiColor.THEME_TRANSITION_A, accent)
-    current_group.assign(SiColor.THEME_TRANSITION_B, accent_light)
-    current_group.assign(SiColor.SVG_THEME, accent)
-    current_group.assign(SiColor.TOOLTIP_BG, SiColor.trans(bg_card, 0.94))
-
-    current_group.assign(SiColor.INTERFACE_BG_A, bg)
-    current_group.assign(SiColor.INTERFACE_BG_B, bg_elevated)
-    current_group.assign(SiColor.INTERFACE_BG_C, bg_card)
-    current_group.assign(SiColor.INTERFACE_BG_D, border)
-    if theme.get("is_light"):
-        current_group.assign(SiColor.INTERFACE_BG_E, input_bg)
-    else:
-        current_group.assign(SiColor.INTERFACE_BG_E, SiColor.mix(border, text_pri, 0.85))
-
-    current_group.assign(SiColor.TEXT_A, text_pri)
-    current_group.assign(SiColor.TEXT_B, text_pri)
-    current_group.assign(SiColor.TEXT_C, text_sec)
-    current_group.assign(SiColor.TEXT_D, text_tert)
-    current_group.assign(SiColor.TEXT_E, SiColor.mix(text_tert, bg, 0.8))
-    current_group.assign(SiColor.TEXT_THEME, accent if theme.get("is_light") else accent_light)
-
-    current_group.assign(SiColor.SIDE_MSG_THEME_NORMAL, bg_elevated)
-    current_group.assign(SiColor.SIDE_MSG_THEME_INFO, accent)
-    current_group.assign(SiColor.SIDE_MSG_THEME_WARNING, theme["yellow"])
-    current_group.assign(SiColor.SIDE_MSG_THEME_ERROR, theme["red"])
-    current_group.assign(SiColor.SIDE_MSG_THEME_SUCCESS, theme["green"])
-
-    current_group.assign(SiColor.MENU_BG, bg_card)
-    current_group.assign(SiColor.TITLE_INDICATOR, accent if theme.get("is_light") else accent_light)
-    current_group.assign(SiColor.TITLE_HIGHLIGHT, SiColor.mix(accent, bg, 0.25))
-
-    current_group.assign(SiColor.BUTTON_PANEL, bg_elevated)
-    current_group.assign(SiColor.BUTTON_SHADOW, SiColor.mix(bg_card, "#000000", 0.9))
-    current_group.assign(SiColor.BUTTON_THEMED_BG_A, accent)
-    current_group.assign(SiColor.BUTTON_THEMED_BG_B, accent_light)
-    current_group.assign(SiColor.BUTTON_THEMED_SHADOW_A, SiColor.mix(accent, "#000000", 0.75))
-    current_group.assign(SiColor.BUTTON_THEMED_SHADOW_B, SiColor.mix(accent_light, "#000000", 0.75))
-    current_group.assign(SiColor.BUTTON_ON, accent)
-    current_group.assign(SiColor.BUTTON_OFF, accent_light)
-    current_group.assign(SiColor.BUTTON_TEXT_BUTTON_IDLE, accent if theme.get("is_light") else accent_light)
-    current_group.assign(SiColor.BUTTON_TEXT_BUTTON_FLASH, accent if theme.get("is_light") else accent_light)
-    current_group.assign(SiColor.BUTTON_TEXT_BUTTON_HOVER, accent_text)
-
-    current_group.assign(SiColor.RADIO_BUTTON_CHECKED, accent)
-    current_group.assign(SiColor.CHECKBOX_CHECKED, accent)
-    current_group.assign(SiColor.SWITCH_ACTIVATE, accent)
-    current_group.assign(SiColor.SCROLL_BAR, SiColor.trans(text_pri, 0.3))
-    current_group.assign(SiColor.PROGRESS_BAR_TRACK, bg_elevated)
-    current_group.assign(SiColor.PROGRESS_BAR_PROCESSING, accent_light)
-    current_group.assign(SiColor.PROGRESS_BAR_COMPLETING, theme["yellow"])
-
-
 def _apply_qt_global_theme():
+    """Apply global Qt styles for widgets not managed by qfluentwidgets."""
     app = QApplication.instance()
     if app is None:
         return
+    # Only apply fallback styles; qfluentwidgets manages its own widgets
     app.setStyleSheet(f"""
-        /* Global font baseline — propagates to every stylesheet-rendered widget.
-           Without this rule, widgets that have their own stylesheet (e.g.
-           color/border declarations) lose the application-level QFont family. */
         * {{
             font-family: {UI_FONT_STACK_CSS};
-        }}
-        QLabel {{
-            color: {CLR_TEXT_SEC};
-            background: transparent;
-        }}
-        QLabel:disabled {{
-            color: {CLR_TEXT_TERT};
-        }}
-        QCheckBox, QRadioButton, QGroupBox {{
-            color: {CLR_TEXT_PRI};
-            background: transparent;
-        }}
-        QCheckBox:disabled, QRadioButton:disabled, QGroupBox:disabled {{
-            color: {CLR_TEXT_TERT};
-        }}
-        /* Default text-area chrome — pages that need a different look
-           override via widget-level setStyleSheet (more specific wins). */
-        QTextEdit, QTextBrowser {{
-            background-color: {CLR_BG_ELEVATED};
-            color: {CLR_TEXT_PRI};
-            border: 1px solid {CLR_BORDER};
-            border-radius: 8px;
-            padding: 6px 10px;
-            selection-background-color: {_hex_with_alpha(CLR_ACCENT_LIGHT, 172)};
-            selection-color: {CLR_ACCENT_TEXT};
-        }}
-        QTextEdit:focus, QTextBrowser:focus {{
-            border-color: {_mix_hex_colors(CLR_ACCENT, CLR_ACCENT_LIGHT, 0.42)};
         }}
         QToolTip {{
             color: {CLR_TEXT_PRI};
@@ -363,62 +263,12 @@ def _apply_qt_global_theme():
             color: {CLR_ACCENT_TEXT};
             background-color: {CLR_ACCENT};
         }}
-        QPushButton:focus {{
-            outline: none;
-        }}
         QMessageBox {{
             background-color: {CLR_BG};
             color: {CLR_TEXT_PRI};
         }}
         QMessageBox QLabel {{
             color: {CLR_TEXT_PRI};
-        }}
-        /* macOS Sonoma-style thin scrollbar */
-        QScrollBar:vertical {{
-            background: transparent;
-            width: 10px;
-            margin: 0;
-            border: none;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {_hex_with_alpha(CLR_TEXT_TERT, 110)};
-            min-height: 28px;
-            border-radius: 4px;
-            margin: 2px;
-        }}
-        QScrollBar::handle:vertical:hover {{
-            background: {_hex_with_alpha(CLR_TEXT_SEC, 160)};
-        }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-            height: 0;
-            background: transparent;
-            border: none;
-        }}
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-            background: transparent;
-        }}
-        QScrollBar:horizontal {{
-            background: transparent;
-            height: 10px;
-            margin: 0;
-            border: none;
-        }}
-        QScrollBar::handle:horizontal {{
-            background: {_hex_with_alpha(CLR_TEXT_TERT, 110)};
-            min-width: 28px;
-            border-radius: 4px;
-            margin: 2px;
-        }}
-        QScrollBar::handle:horizontal:hover {{
-            background: {_hex_with_alpha(CLR_TEXT_SEC, 160)};
-        }}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-            width: 0;
-            background: transparent;
-            border: none;
-        }}
-        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-            background: transparent;
         }}
     """)
 
@@ -437,6 +287,7 @@ _CLR_KEY_MAP = [
     ("CLR_BG_VIBRANCY", "bg_vibrancy"),
     ("CLR_HAIRLINE", "hairline"),
     ("CLR_SELECTED_BG", "selected_bg"),
+    ("CLR_BG_CARD_HOVER", "bg_card_hover"),
 ]
 
 
@@ -447,11 +298,12 @@ def apply_theme(theme_name: str):
     mod = sys.modules[__name__]
     for clr_key, t_key in _CLR_KEY_MAP:
         setattr(mod, clr_key, t[t_key])
-    _update_siui_color_group(t)
-    try:
-        SiGlobal.siui.reloadAllWindowsStyleSheet()
-    except Exception:
-        pass
+    # Sync qfluentwidgets accent color
+    if _HAS_QFW:
+        try:
+            qconfig.set(qconfig.themeColor, QColor(t["accent"]))
+        except Exception:
+            pass
     _apply_qt_global_theme()
 
 
@@ -488,7 +340,7 @@ def _build_input_field_stylesheet(
     if include_combo:
         combo_block = f"""
             QComboBox {{
-                padding: 4px 32px 4px 10px;
+                padding: 5px 30px 5px 10px;
             }}
             QComboBox::drop-down {{
                 subcontrol-origin: padding;
@@ -608,7 +460,11 @@ def _build_text_area_stylesheet(*, radius: int = 12, padding: str = "8px 10px") 
 
 
 def _secret_reveal_icon(revealed: bool) -> QIcon:
-    pix = QPixmap(20, 20)
+    size = 20
+    ratio = _device_pixel_ratio()
+    physical_size = max(1, int(size * ratio + 0.5))
+    pix = QPixmap(physical_size, physical_size)
+    pix.setDevicePixelRatio(ratio)
     pix.fill(Qt.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -630,7 +486,20 @@ def _secret_reveal_icon(revealed: bool) -> QIcon:
     return QIcon(pix)
 
 
+def _device_pixel_ratio() -> float:
+    app = QApplication.instance()
+    if app is not None:
+        try:
+            screen = app.primaryScreen()
+            if screen is not None:
+                return max(1.0, float(screen.devicePixelRatio()))
+        except Exception:
+            pass
+    return 1.0
+
+
 def _install_secret_reveal_action(edit: QLineEdit):
+    from PyQt5.QtWidgets import QAction
     action = getattr(edit, "_secret_reveal_action", None)
     revealed = bool(getattr(edit, "_secret_revealed", False))
 
@@ -642,7 +511,9 @@ def _install_secret_reveal_action(edit: QLineEdit):
 
     if action is None:
         edit._secret_revealed = False
-        action = edit.addAction(_secret_reveal_icon(False), QLineEdit.TrailingPosition)
+        action = QAction(_secret_reveal_icon(False), "", edit)
+        action.setToolTip("显示内容")
+        edit.addAction(action, QLineEdit.TrailingPosition)
         edit._secret_reveal_action = action
 
         def _toggle_secret():
@@ -656,31 +527,41 @@ def _install_secret_reveal_action(edit: QLineEdit):
     _apply_state()
 
 
+def patch_setting_card_padding(card, right: int = 16):
+    """Add right padding to a qfluentwidgets SettingCard's internal layout."""
+    card.hBoxLayout.setContentsMargins(16, 0, right, 0)
+
+
 def _tune_font_quality(font: QFont) -> None:
     """Maximize text rendering quality: anti-alias + full hinting."""
     font.setKerning(True)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     try:
-        font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
+        font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     except AttributeError:
         pass
 
 
 UI_FONT_FAMILIES = [
-    "PingFang SC",
-    "SF Pro Text",
-    "SF Pro Display",
-    "Microsoft YaHei UI",
+    "DM Sans",
     "Noto Sans SC",
-    "Segoe UI Variable Text",
+    "PingFang SC",
+    "Microsoft YaHei UI",
     "Segoe UI",
-    "DengXian",
+    "Arial",
+]
+HEADING_FONT_FAMILIES = [
+    "Syne",
+    "DM Sans",
+    "Noto Sans SC",
+    "PingFang SC",
+    "Microsoft YaHei UI",
+    "Segoe UI",
     "Arial",
 ]
 MONO_FONT_FAMILIES = [
-    "SF Mono",
-    "Cascadia Mono",
     "JetBrains Mono",
+    "Cascadia Mono",
     "Consolas",
     "Microsoft YaHei UI",
 ]
@@ -706,15 +587,20 @@ def _make_ui_font(size: int, weight: int = QFont.Normal) -> QFont:
     return _make_font(UI_FONT_FAMILIES, size, weight)
 
 
+def _make_heading_font(size: int, weight: int = QFont.Bold) -> QFont:
+    """Heading font using Syne for display titles."""
+    return _make_font(HEADING_FONT_FAMILIES, size, weight)
+
+
 # Sonoma type scale
 _FONT_MEDIUM = getattr(QFont, "Medium", QFont.DemiBold)
 FONT_CAPTION   = _make_ui_font(10)
 FONT_BODY      = _make_ui_font(11)
 FONT_BODY_EMPH = _make_ui_font(11, _FONT_MEDIUM)
 FONT_HEADLINE  = _make_ui_font(13, _FONT_MEDIUM)
-FONT_TITLE_2   = _make_ui_font(17, _FONT_MEDIUM)
+FONT_TITLE_2   = _make_heading_font(17, QFont.Bold)
 FONT_TITLE_2.setLetterSpacing(QFont.PercentageSpacing, 100)
-FONT_TITLE_1   = _make_ui_font(22, _FONT_MEDIUM)
+FONT_TITLE_1   = _make_heading_font(22, QFont.Bold)
 FONT_TITLE_1.setLetterSpacing(QFont.PercentageSpacing, 100)
 
 # Backward-compat aliases — existing imports of FONT_UI / FONT_TITLE keep working
@@ -723,10 +609,9 @@ FONT_TITLE = FONT_TITLE_2
 
 
 def register_app_fonts() -> int:
-    """Load bundled Inter TTFs. Call once after QApplication created.
+    """Load bundled TTFs. Call once after QApplication created.
 
-    Returns number of fonts loaded. Missing fonts/ folder → silently returns 0
-    and the cascade falls back to PingFang SC / 阿里巴巴普惠体 / YaHei.
+    Returns number of fonts loaded.
     """
     import os
     from PyQt5.QtGui import QFontDatabase
@@ -734,7 +619,8 @@ def register_app_fonts() -> int:
     if not os.path.isdir(fonts_dir):
         return 0
     loaded = 0
-    for name in ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Bold.ttf"):
+    for name in ("DMSans-Regular.ttf", "DMSans-Medium.ttf", "DMSans-SemiBold.ttf",
+                 "Syne-Bold.ttf", "JetBrainsMono-Regular.ttf", "NotoSansSC-VF.ttf"):
         path = os.path.join(fonts_dir, name)
         if os.path.isfile(path) and QFontDatabase.addApplicationFont(path) >= 0:
             loaded += 1

@@ -209,9 +209,11 @@ async def startup():
 
 def _enable_crisp_high_dpi() -> None:
     """Ask Windows and Qt to render at native monitor DPI instead of bitmap scaling."""
-    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
-    os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
-    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
+    os.environ.pop("QT_DEVICE_PIXEL_RATIO", None)
+    os.environ.pop("QT_SCALE_FACTOR", None)
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    os.environ["QT_SCALE_FACTOR_ROUNDING_POLICY"] = "PassThrough"
     if sys.platform != "win32":
         return
 
@@ -242,7 +244,7 @@ def _run_desktop():
 
     from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
     from PyQt5.QtCore import QThread, Qt, QTimer, QPoint, QTranslator, QLibraryInfo, QLocale
-    from PyQt5.QtGui import QPixmap, QPainter, QFont, QColor
+    from PyQt5.QtGui import QPixmap, QPainter, QFont, QFontDatabase, QColor
     from ui import AiszrApp, CaptureWorker
 
     # Enable HighDPI BEFORE QApplication is created — required for crisp text rendering.
@@ -275,14 +277,22 @@ def _run_desktop():
 
     # Global app font — Inter (Latin) → PingFang SC / 阿里巴巴 / YaHei (CJK).
     # Qt picks per-glyph from the family list so mixed text renders correctly.
-    _ui_font = QFont(UI_FONT_FAMILIES[0], 10)
+    available_fonts = set(QFontDatabase().families())
+    primary_ui_family = next(
+        (family for family in UI_FONT_FAMILIES if family in available_fonts),
+        UI_FONT_FAMILIES[0],
+    )
+    ui_font_families = [primary_ui_family] + [
+        family for family in UI_FONT_FAMILIES if family != primary_ui_family
+    ]
+    _ui_font = QFont(primary_ui_family, 10)
     try:
-        _ui_font.setFamilies(UI_FONT_FAMILIES)
+        _ui_font.setFamilies(ui_font_families)
     except AttributeError:
         pass  # Qt < 5.13 lacks setFamilies; single family + stylesheet cascade still works
     _ui_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     try:
-        _ui_font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
+        _ui_font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     except AttributeError:
         pass
     app.setFont(_ui_font)

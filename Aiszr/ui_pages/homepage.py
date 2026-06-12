@@ -18,14 +18,18 @@ from PyQt5.QtGui import QColor, QIcon, QIntValidator, QPainter, QPixmap
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QTextBrowser, QToolTip, QApplication, QDialog, QFrame,
+    QLabel, QTextBrowser, QToolTip, QApplication, QDialog,
     QSizePolicy,
 )
 import ui_theme as theme
 from ui_components import MacCard, MacButton, MacComboBox, MacLineEdit
 
-from siui.components.page import SiPage
-from siui.core import SiGlobal
+from fluent_page import FluentPage
+
+try:
+    from qfluentwidgets import FluentIcon
+except ImportError:
+    FluentIcon = None
 
 from obs_actions import ObsActionSettings
 from ui_settings import _load_settings, _save_settings
@@ -67,13 +71,15 @@ class _DeviceChangeFilter(QAbstractNativeEventFilter):
         return False, 0
 
 
+_ICON_SVGS = {
+    "ic_fluent_mic_filled": '<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>',
+    "ic_fluent_desktop_speaker_filled": '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>',
+}
+
+
 def _icon_svg(name: str) -> str:
-    """Resolve Fluent UI icon → SVG string via icon pack."""
-    try:
-        return SiGlobal.siui.iconpack.get(
-            name, color_code=SiGlobal.siui.colors["SVG_NORMAL"])
-    except Exception:
-        return ""
+    """Resolve Fluent UI icon name → SVG string."""
+    return _ICON_SVGS.get(name, "")
 
 
 def _fluent_icon(name: str, size: int = 18) -> QIcon:
@@ -83,12 +89,34 @@ def _fluent_icon(name: str, size: int = 18) -> QIcon:
     if isinstance(svg_data, str):
         svg_data = svg_data.encode("utf-8")
     renderer = QSvgRenderer(svg_data)
-    pixmap = QPixmap(size, size)
+    ratio = _device_pixel_ratio()
+    physical_size = max(1, int(size * ratio + 0.5))
+    pixmap = QPixmap(physical_size, physical_size)
+    pixmap.setDevicePixelRatio(ratio)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
     renderer.render(painter, QRectF(0, 0, size, size))
     painter.end()
     return QIcon(pixmap)
+
+
+def _device_pixel_ratio(widget=None) -> float:
+    try:
+        if widget is not None:
+            return max(1.0, float(widget.devicePixelRatioF()))
+    except Exception:
+        pass
+    app = QApplication.instance()
+    if app is not None:
+        try:
+            screen = app.primaryScreen()
+            if screen is not None:
+                return max(1.0, float(screen.devicePixelRatio()))
+        except Exception:
+            pass
+    return 1.0
 
 
 class _VolumeIcon(QWidget):
@@ -247,11 +275,17 @@ class _VolumeIcon(QWidget):
         ox = (sz.width() - iw) // 2
         oy = (sz.height() - ih) // 2
 
-        mic_pix = QPixmap(iw, ih)
+        ratio = _device_pixel_ratio(self)
+        mic_pix = QPixmap(
+            max(1, int(iw * ratio + 0.5)),
+            max(1, int(ih * ratio + 0.5)),
+        )
+        mic_pix.setDevicePixelRatio(ratio)
         mic_pix.fill(Qt.transparent)
         if self._renderer.isValid():
             p2 = QPainter(mic_pix)
             p2.setRenderHint(QPainter.Antialiasing, True)
+            p2.setRenderHint(QPainter.SmoothPixmapTransform, True)
             self._renderer.render(p2, QRectF(0, 0, iw, ih))
             p2.end()
 
@@ -259,10 +293,16 @@ class _VolumeIcon(QWidget):
             lvl = self._level
         boosted = min(1.0, lvl * self.LEVEL_BOOST)
 
-        fill_pix = QPixmap(iw, ih)
+        fill_pix = QPixmap(
+            max(1, int(iw * ratio + 0.5)),
+            max(1, int(ih * ratio + 0.5)),
+        )
+        fill_pix.setDevicePixelRatio(ratio)
         fill_pix.fill(Qt.transparent)
         if boosted > 0.01:
             p3 = QPainter(fill_pix)
+            p3.setRenderHint(QPainter.Antialiasing, True)
+            p3.setRenderHint(QPainter.SmoothPixmapTransform, True)
             h = int(ih * boosted)
             p3.fillRect(0, ih - h, iw, h, self._level_color(boosted))
             p3.setCompositionMode(QPainter.CompositionMode_DestinationIn)
@@ -285,7 +325,7 @@ class _VolumeIcon(QWidget):
         return QColor(255, int(255 * (1 - t)), 0)
 
 
-class HomePage(SiPage):
+class HomePage(FluentPage):
     navigate_to_page = pyqtSignal(int)
     quick_start_requested = pyqtSignal()
     quick_stop_requested = pyqtSignal()
@@ -316,8 +356,9 @@ class HomePage(SiPage):
         outer.setContentsMargins(4, 0, 4, 4)
         outer.setSpacing(6)
 
-        # Hero greeting — Sonoma display title
-        outer.addWidget(self._build_hero())
+        # Hero greeting — brand title
+        self._hero_row = self._build_hero()
+        outer.addWidget(self._hero_row)
 
         grid = QGridLayout()
         grid.setSpacing(theme.SPACING_MD)
@@ -353,7 +394,7 @@ class HomePage(SiPage):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        h = self.scroll_area.height()
+        h = self._scroll.height()
         if h > 0:
             self._root.setFixedHeight(h)
 
@@ -375,7 +416,7 @@ class HomePage(SiPage):
 
     def set_live_page(self, live_page):
         live_page.setParent(self)
-        live_scroll = getattr(live_page, "scroll_area", None)
+        live_scroll = getattr(live_page, "_scroll", None)
         if live_scroll is not None:
             if hasattr(live_scroll, "setVerticalScrollBarPolicy"):
                 live_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -397,67 +438,29 @@ class HomePage(SiPage):
     def _build_hero(self) -> QWidget:
         """Lightweight brand header."""
         row = QWidget(self)
-        row.setFixedHeight(48)
         ly = QHBoxLayout(row)
-        ly.setContentsMargins(8, 2, 8, 2)
-        ly.setSpacing(12)
+        ly.setContentsMargins(8, 4, 8, 4)
+        ly.setSpacing(8)
 
-        self._hero_accent = QFrame(row)
-        self._hero_accent.setObjectName("HomeHeroAccent")
-        self._hero_accent.setFixedSize(4, 34)
-        ly.addWidget(self._hero_accent)
-
-        title_block = QWidget(row)
-        title_block.setFixedHeight(42)
-        title_block.setStyleSheet("background: transparent;")
-        title_layout = QVBoxLayout(title_block)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(0)
-        self._hero_title = QLabel("Aiszr · AI 直播助手")
-        self._hero_title.setFont(theme.FONT_TITLE_1)
-        self._hero_title.setMinimumHeight(26)
-        title_layout.addWidget(self._hero_title)
-        self._hero_subtitle = QLabel("实时监控、推流控制、关键词回复")
-        self._hero_subtitle.setFont(theme.FONT_BODY)
-        self._hero_subtitle.setFixedHeight(16)
-        title_layout.addWidget(self._hero_subtitle)
-        ly.addWidget(title_block)
+        self._hero_title = QLabel("Aiszr.")
+        self._hero_title.setFont(theme.FONT_TITLE_2)
+        ly.addWidget(self._hero_title)
         ly.addStretch(1)
         self._apply_hero_styles()
         return row
 
     def _apply_hero_styles(self):
-        if hasattr(self, "_hero_accent"):
-            accent = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_TEXT_PRI, 0.10)
-            self._hero_accent.setStyleSheet(
-                f"QFrame#HomeHeroAccent {{"
-                f"background-color: {accent};"
-                f"border: none;"
-                f"border-radius: 2px;"
-                f"}}"
-            )
         if hasattr(self, "_hero_title"):
             self._hero_title.setStyleSheet(
                 f"color: {theme.CLR_TEXT_PRI}; background: transparent; border: none;"
-            )
-        if hasattr(self, "_hero_subtitle"):
-            self._hero_subtitle.setStyleSheet(
-                f"color: {theme.CLR_TEXT_SEC}; background: transparent; border: none;"
             )
 
     # ── Stream control card ───────────────────────────────
 
     def _build_stream_card(self) -> MacCard:
-        card = MacCard(self, padding=(16, 10, 16, 10))
+        card = MacCard(self, title="推流控制")
         body = card.body()
         body.setSpacing(6)
-
-        title = QLabel("推流控制")
-        title.setFont(theme.FONT_BODY_EMPH)
-        title.setStyleSheet(
-            f"color: {theme.CLR_TEXT_PRI}; border: none; background: transparent;"
-        )
-        body.addWidget(title)
 
         self._stream_asset_label = QLabel("主播形象：未选择")
         self._stream_asset_label.setWordWrap(True)
@@ -1291,12 +1294,12 @@ class HomePage(SiPage):
     def _set_obs_connected(self, connected: bool):
         if not hasattr(self, "_obs_status_dot"):
             return
-        color = "#30D158" if connected else "#202124"
+        color = theme.CLR_GREEN if connected else theme.CLR_TEXT_TERT
         self._obs_status_dot.setStyleSheet(
             "QLabel {"
             f"background-color: {color};"
             "border: none;"
-            "border-radius: 5px;"
+            f"border-radius: {theme.RADIUS_SM}px;"
             "}"
         )
 

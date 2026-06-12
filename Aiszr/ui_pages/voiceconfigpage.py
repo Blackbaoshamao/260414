@@ -9,10 +9,9 @@ from ui_settings import _load_settings
 from ui_settings import _save_settings
 from ui_theme import _build_input_field_stylesheet
 from ui_theme import _build_text_area_stylesheet
-from ui_theme import _hex_with_alpha
 from ui_theme import _install_secret_reveal_action
-from ui_theme import _mix_hex_colors
 from ui_theme import apply_theme
+from ui_theme import patch_setting_card_padding
 from voice_manager import VoiceActionResult
 from voice_models import VOICE_MODELS
 from voice_models import VOICE_PROVIDERS
@@ -30,20 +29,12 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QDialog, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFileDialog,
     QInputDialog, QFrame, QAbstractButton, QSpinBox, QDoubleSpinBox,
     QSizePolicy, QComboBox, QScrollArea, QApplication, QApplication, QTextBrowser, QTextEdit, QLabel, QPushButton, QLineEdit, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFileDialog, QInputDialog, QFrame, QAbstractButton, QSpinBox, QDoubleSpinBox, QSizePolicy, QComboBox, QScrollArea)
-from siui.core import SiColor, SiGlobal, GlobalFont, Si
-from siui.gui import SiFont
-from siui.components.page import SiPage
-from siui.components.widgets import (SiDenseHContainer, SiDenseVContainer,
-    SiLabel, SiLineEdit, SiPushButton, SiSvgLabel)
-from siui.components.titled_widget_group import SiTitledWidgetGroup
-from siui.components.option_card import SiOptionCardLinear
-from siui.components.combobox.combobox import SiComboBox
-from siui.components.slider import SiSliderH
-from siui.templates.application.components.dialog.modal import SiModalDialog
+from qfluentwidgets import SettingCard, FluentIcon
+from fluent_page import FluentPage
 import ui_theme as theme
 from loguru import logger
 from ui_constants import _CARD_W, _CARD_H
-from ui import _AddCard, _VideoThumbCard
+from ui_components import AddCard as _AddCard, VideoThumbCard as _VideoThumbCard
 from ui_components import MacButton
 from avatar_library import (
     AvatarLibrary,
@@ -95,11 +86,19 @@ class _HalfHighlightTitle(QLabel):
         painter.end()
 
 
-class VoiceConfigPage(SiPage):
+def _voice_display_name(voice) -> str:
+    """Return display name with provider suffix, e.g. '000-阿里云百炼'."""
+    name = voice.name or voice.id
+    label = VOICE_PROVIDER_LABELS.get(voice.provider, "")
+    if label and not name.endswith(f"-{label}"):
+        return f"{name}-{label}"
+    return name
+
+
+class VoiceConfigPage(FluentPage):
     _GALLERY_COLUMNS = 3
     _GALLERY_GAP = 12
 
-    back_requested = pyqtSignal()
     api_settings_requested = pyqtSignal()
     clone_dialog_requested = pyqtSignal()
     anchor_settings_requested = pyqtSignal()
@@ -149,47 +148,18 @@ class VoiceConfigPage(SiPage):
             app_dir() / "data" / "voice" / "anchor" / "generated"
         )
 
-        container = SiTitledWidgetGroup(self)
-        container.setSpacing(16)
+        container = QWidget(self)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 0, 8, 0)
+        container_layout.setSpacing(8)
 
-        field_ss = f"""
-            QLineEdit, QSpinBox {{
-                background-color: {theme.CLR_INPUT_BG};
-                color: {theme.CLR_TEXT_PRI};
-                border: 1px solid {theme.CLR_BORDER};
-                border-radius: 8px;
-                padding: 4px 8px;
-            }}
-            QLineEdit:focus, QSpinBox:focus {{
-                border-color: {theme.CLR_ACCENT};
-            }}
-        """
-        button_ss = f"""
-            QPushButton {{
-                background-color: {theme.CLR_BG_ELEVATED};
-                color: {theme.CLR_TEXT_PRI};
-                border: 1px solid {theme.CLR_BORDER};
-                border-radius: 8px;
-                padding: 6px 12px;
-            }}
-            QPushButton:hover {{
-                background-color: {theme.CLR_BG_CARD};
-            }}
-            QPushButton:pressed {{
-                background-color: {_mix_hex_colors(theme.CLR_BG_CARD, "#000000", 0.15)};
-                padding-top: 7px; padding-bottom: 5px;
-                padding-left: 12px; padding-right: 12px;
-            }}
-        """
+        field_ss = _build_input_field_stylesheet(
+            "QLineEdit, QSpinBox", radius=theme.RADIUS_MD, padding="4px 8px")
 
         top_row = QWidget(self)
         top_layout = QHBoxLayout(top_row)
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(theme.SPACING_SM)
-        self._back_btn = MacButton("返回", variant="secondary", parent=self)
-        self._back_btn.setFixedSize(80, 30)
-        self._back_btn.clicked.connect(self.back_requested.emit)
-        top_layout.addWidget(self._back_btn)
         top_layout.addStretch(1)
         self._voice_api_btn = MacButton("语音API设置", variant="secondary", parent=self)
         self._voice_api_btn.setMinimumSize(120, 30)
@@ -207,36 +177,34 @@ class VoiceConfigPage(SiPage):
         self._copilot_settings_btn.setMinimumSize(100, 30)
         self._copilot_settings_btn.clicked.connect(self.copilot_settings_requested.emit)
         top_layout.addWidget(self._copilot_settings_btn)
-        container.addWidget(top_row)
+        container_layout.addWidget(top_row)
         self._back_area = top_row
 
-        provider_card = SiOptionCardLinear(self)
-        provider_card.setTitle("语音供应商", "主播和助播共用同一供应商与模型")
-        provider_card.load("ic_fluent_plug_connected_filled")
+        provider_card = SettingCard(FluentIcon.INFO, "语音供应商", "主播和助播共用同一供应商与模型", parent=self)
         self._provider_combo = QComboBox(self)
         self._provider_combo.setFixedSize(220, 32)
         for provider in VOICE_PROVIDERS:
             self._provider_combo.addItem(VOICE_PROVIDER_LABELS[provider], provider)
-        provider_card.addWidget(self._provider_combo)
+        provider_card.hBoxLayout.addWidget(self._provider_combo, 0, Qt.AlignRight)
+        patch_setting_card_padding(provider_card)
         if self._inline_api_visible:
-            container.addWidget(provider_card)
+            container_layout.addWidget(provider_card)
         self._provider_card = provider_card
 
-        model_card = SiOptionCardLinear(self)
-        model_card.setTitle("语音模型", "根据供应商切换模型")
-        model_card.load("ic_fluent_brain_circuit_filled")
+        model_card = SettingCard(FluentIcon.ROBOT, "语音模型", "根据供应商切换模型", parent=self)
         self._model_combo = QComboBox(self)
         self._model_combo.setFixedSize(220, 32)
-        model_card.addWidget(self._model_combo)
+        model_card.hBoxLayout.addWidget(self._model_combo, 0, Qt.AlignRight)
+        patch_setting_card_padding(model_card)
         if self._inline_api_visible:
-            container.addWidget(model_card)
+            container_layout.addWidget(model_card)
         self._model_card = model_card
 
         self._api_provider_title = QLabel("当前供应商凭据", self)
         self._api_provider_title.setWordWrap(True)
         self._api_provider_title.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none;")
         if self._inline_api_visible:
-            container.addWidget(self._api_provider_title)
+            container_layout.addWidget(self._api_provider_title)
         self._api_fields_wrap = QWidget(self)
         self._api_fields_layout = QVBoxLayout(self._api_fields_wrap)
         self._api_fields_layout.setContentsMargins(0, 0, 0, 0)
@@ -263,7 +231,7 @@ class VoiceConfigPage(SiPage):
             setattr(self, attr_name, edit)
             self._api_fields_layout.addWidget(panel)
         if self._inline_api_visible:
-            container.addWidget(self._api_fields_wrap)
+            container_layout.addWidget(self._api_fields_wrap)
 
         api_btn_row = QHBoxLayout()
         api_btn_row.setContentsMargins(0, 14, 0, 4)
@@ -277,29 +245,29 @@ class VoiceConfigPage(SiPage):
         api_btn_row.addStretch(1)
         self._api_btn_wrap = QWidget(self)
         self._api_btn_wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        # SiDenseVContainer uses child.height() for layout, so this row must
-        # have an explicit height to avoid clipping its inner buttons.
+        # Explicit height so the row is tall enough for its inner buttons.
         self._api_btn_wrap.setFixedHeight(54)
         self._api_btn_wrap.setLayout(api_btn_row)
         if self._inline_api_visible:
-            container.addWidget(self._api_btn_wrap)
+            container_layout.addWidget(self._api_btn_wrap)
 
         self._voice_status_label = QLabel("未检测", self)
         self._voice_status_label.setWordWrap(True)
         self._voice_status_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none;")
         if self._inline_api_visible:
-            container.addWidget(self._voice_status_label)
+            container_layout.addWidget(self._voice_status_label)
         else:
             self._hide_inline_api_widgets()
 
-        container.addTitle("主播音色")
-        anchor_card = SiOptionCardLinear(self)
-        anchor_card.setTitle("选择声音", "从声音库中选择主播声音")
-        anchor_card.load("ic_fluent_mic_filled")
+        _title = QLabel("主播音色", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
+        anchor_card = SettingCard(FluentIcon.MUSIC, "选择声音", "从声音库中选择主播声音", parent=self)
         self._anchor_voice_combo = QComboBox(self)
         self._anchor_voice_combo.setFixedSize(220, 32)
-        anchor_card.addWidget(self._anchor_voice_combo)
-        container.addWidget(anchor_card)
+        anchor_card.hBoxLayout.addWidget(self._anchor_voice_combo, 0, Qt.AlignRight)
+        patch_setting_card_padding(anchor_card)
+        container_layout.addWidget(anchor_card)
         anchor_params = QWidget(self)
         anchor_params.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         anchor_params.setFixedHeight(56)
@@ -335,19 +303,20 @@ class VoiceConfigPage(SiPage):
         self._anchor_delete_btn.setMinimumSize(88, 34)
         self._anchor_delete_btn.setFixedHeight(34)
         anchor_params_layout.addWidget(self._anchor_delete_btn)
-        container.addWidget(anchor_params)
+        container_layout.addWidget(anchor_params)
         self._copilot_runtime_status = QLabel("最近播报：无", self)
         self._copilot_runtime_status.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none;")
-        container.addWidget(self._copilot_runtime_status)
+        container_layout.addWidget(self._copilot_runtime_status)
 
-        container.addTitle("助播音色")
-        copilot_card = SiOptionCardLinear(self)
-        copilot_card.setTitle("选择声音", "从声音库中选择助播声音")
-        copilot_card.load("ic_fluent_mic_filled")
+        _title = QLabel("助播音色", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
+        copilot_card = SettingCard(FluentIcon.MUSIC, "选择声音", "从声音库中选择助播声音", parent=self)
         self._copilot_voice_combo = QComboBox(self)
         self._copilot_voice_combo.setFixedSize(220, 32)
-        copilot_card.addWidget(self._copilot_voice_combo)
-        container.addWidget(copilot_card)
+        copilot_card.hBoxLayout.addWidget(self._copilot_voice_combo, 0, Qt.AlignRight)
+        patch_setting_card_padding(copilot_card)
+        container_layout.addWidget(copilot_card)
         copilot_params = QWidget(self)
         copilot_params.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         copilot_params.setFixedHeight(56)
@@ -383,29 +352,14 @@ class VoiceConfigPage(SiPage):
         self._copilot_delete_btn.setMinimumSize(88, 34)
         self._copilot_delete_btn.setFixedHeight(34)
         copilot_params_layout.addWidget(self._copilot_delete_btn)
-        container.addWidget(copilot_params)
+        container_layout.addWidget(copilot_params)
 
         # ------------------------------------------------------------------
         # Streaming console (merged from DigitalHumanPage)
         # ------------------------------------------------------------------
-        stream_text_ss = f"""
-            QTextEdit {{
-                background-color: {theme.CLR_BG_ELEVATED};
-                color: {theme.CLR_TEXT_PRI};
-                border: none;
-                border-radius: 12px;
-                padding: 12px 14px;
-                font-size: 15px;
-                selection-background-color: {_hex_with_alpha(theme.CLR_ACCENT_LIGHT, 100)};
-                selection-color: {theme.CLR_TEXT_PRI};
-            }}
-            QTextEdit:focus {{
-                border: 2px solid {_mix_hex_colors(theme.CLR_BORDER, theme.CLR_ACCENT_LIGHT, 0.5)};
-                padding: 11px 13px;
-            }}
-        """
-
-        container.addTitle("主播形象（右键移除，左键选中）")
+        _title = QLabel("主播形象（右键移除，左键选中）", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
         gallery_stream_row = QWidget(self)
         self._gallery_stream_row = gallery_stream_row
         gallery_area_height = self._gallery_height_for_count(MAX_AVATAR_RECORDS)
@@ -471,7 +425,7 @@ class VoiceConfigPage(SiPage):
         stream_panel_layout.addWidget(stream_btn_row)
         stream_panel_layout.addStretch(1)
         gallery_stream_layout.addWidget(stream_panel, 1, Qt.AlignTop)
-        container.addWidget(gallery_stream_row)
+        container_layout.addWidget(gallery_stream_row)
         self._rebuild_gallery()
 
         self.setAttachment(container)
@@ -514,10 +468,6 @@ class VoiceConfigPage(SiPage):
             self._stream_title_label.update()
 
     def _apply_theme_styles(self):
-        try:
-            SiGlobal.siui.reloadStyleSheetRecursively(self)
-        except Exception:
-            pass
         self._apply_stream_title_style()
 
         field_ss = _build_input_field_stylesheet(
@@ -543,7 +493,6 @@ class VoiceConfigPage(SiPage):
 
         # All MacButton instances self-manage styles via apply_theme_styles()
         for btn in (
-            self._back_btn,
             self._voice_api_btn, self._voice_clone_btn,
             self._anchor_settings_btn, self._copilot_settings_btn,
             self._voice_save_btn, self._voice_validate_btn,
@@ -699,10 +648,13 @@ class VoiceConfigPage(SiPage):
         return True, f"样本时长 {duration:.2f}s，校验通过"
 
     def _populate_voice_combos(self, force: bool = False):
-        voices = compatible_voice_entries(
-            self._voice_settings_state.voices,
-            self._voice_settings_state.provider,
-        )
+        voices = [
+            v for v in compatible_voice_entries(
+                self._voice_settings_state.voices,
+                self._voice_settings_state.provider,
+            )
+            if v.clone_status == "ready"
+        ]
         for combo, role_key in (
             (self._anchor_voice_combo, "anchor"),
             (self._copilot_voice_combo, "copilot"),
@@ -712,7 +664,7 @@ class VoiceConfigPage(SiPage):
             if not force and combo.count() == len(voices) + 1:
                 same = True
                 for i, v in enumerate(voices):
-                    if combo.itemData(i + 1) != v.id or combo.itemText(i + 1) != (v.name or v.id):
+                    if combo.itemData(i + 1) != v.id or combo.itemText(i + 1) != _voice_display_name(v):
                         same = False
                         break
                 if same:
@@ -727,7 +679,7 @@ class VoiceConfigPage(SiPage):
             combo.clear()
             combo.addItem("（未选择）", "")
             for v in voices:
-                combo.addItem(v.name or v.id, v.id)
+                combo.addItem(_voice_display_name(v), v.id)
             for idx in range(combo.count()):
                 if combo.itemData(idx) == target_id:
                     combo.setCurrentIndex(idx)
@@ -811,7 +763,7 @@ class VoiceConfigPage(SiPage):
             self._set_voice_status(f"{role_label}删除失败：请先选择音色")
             return
         voice = self._voice_settings_state.find_voice(voice_id)
-        voice_name = voice.name if voice and voice.name else voice_id
+        voice_name = _voice_display_name(voice) if voice else voice_id
         answer = QMessageBox.question(
             self,
             "删除音色",

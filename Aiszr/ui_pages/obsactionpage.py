@@ -9,6 +9,7 @@ from ui_theme import SiSwitch
 from ui_theme import _build_input_field_stylesheet
 from ui_theme import _install_secret_reveal_action
 from ui_theme import apply_theme
+from ui_theme import patch_setting_card_padding
 
 
 from PyQt5.QtCore import pyqtSignal, Qt
@@ -16,10 +17,8 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QDialog, QSpinBox, QSizePolicy,
 )
-from siui.components.page import SiPage
-from siui.components.widgets import SiDenseHContainer, SiLineEdit, SiPushButton
-from siui.components.titled_widget_group import SiTitledWidgetGroup
-from siui.components.option_card import SiOptionCardLinear
+from fluent_page import FluentPage
+from qfluentwidgets import SettingCard, PushButton, PrimaryPushButton, FluentIcon
 import ui_theme as theme
 from ui_components import MacCard, MacButton, MacLineEdit, MacSpinBox
 from ui_constants import _CARD_H, _CARD_W
@@ -27,8 +26,7 @@ from ui_settings import _save_settings
 from loguru import logger
 
 
-class ObsActionPage(SiPage):
-    back_requested = pyqtSignal()
+class ObsActionPage(FluentPage):
     obs_settings_changed = pyqtSignal(object)
     obs_status_check_requested = pyqtSignal(object)
 
@@ -39,20 +37,15 @@ class ObsActionPage(SiPage):
         self._obs_rules: list[ObsActionRule] = list(DEFAULT_OBS_ACTION_SETTINGS.rules)
         self._suspend_status_requests = False
 
-        container = SiTitledWidgetGroup(self)
-        container.setSpacing(theme.SPACING_MD)
-
-        # ── Back row ─────────────────────────────────────
-        back_area = SiDenseHContainer(self)
-        back_area.setFixedHeight(32)
-        back_btn = MacButton("返回", variant="secondary", parent=self)
-        back_btn.setFixedSize(80, 28)
-        back_btn.clicked.connect(self.back_requested.emit)
-        back_area.addWidget(back_btn)
-        container.addWidget(back_area)
+        container = QWidget(self)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 0, 8, 0)
+        container_layout.setSpacing(8)
 
         # ── Enable card ──────────────────────────────────
-        container.addTitle("OBS 动作联动")
+        _title = QLabel("OBS 动作联动", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
         self._obs_enable_panel = MacCard(self)
         self._obs_enable_panel.setMinimumHeight(90)
         enable_top_row = QHBoxLayout()
@@ -86,7 +79,7 @@ class ObsActionPage(SiPage):
         enable_layout.addWidget(self._obs_runtime_status_label)
         enable_top_row.addWidget(enable_right, stretch=0, alignment=Qt.AlignRight | Qt.AlignVCenter)
         self._obs_enable_panel.body().addLayout(enable_top_row)
-        container.addWidget(self._obs_enable_panel)
+        container_layout.addWidget(self._obs_enable_panel)
 
         # ── Runtime status card ──────────────────────────
         self._obs_runtime_panel = MacCard(self)
@@ -102,7 +95,7 @@ class ObsActionPage(SiPage):
         self._obs_test_btn.clicked.connect(self._request_obs_status_check)
         runtime_btn_row.addWidget(self._obs_test_btn)
         self._obs_runtime_panel.body().addLayout(runtime_btn_row)
-        container.addWidget(self._obs_runtime_panel)
+        container_layout.addWidget(self._obs_runtime_panel)
 
         # ── Endpoint card (host + port) ──────────────────
         self._obs_endpoint_panel = MacCard(self)
@@ -128,68 +121,64 @@ class ObsActionPage(SiPage):
         endpoint_row.addWidget(self._obs_port_spin)
         endpoint_row.addStretch(1)
         self._obs_endpoint_panel.body().addLayout(endpoint_row)
-        container.addWidget(self._obs_endpoint_panel)
+        container_layout.addWidget(self._obs_endpoint_panel)
 
-        # ── siui OptionCardLinear sub-settings ───────────
-        obs_password_card = SiOptionCardLinear(self)
-        obs_password_card.setTitle("OBS 密码", "如果开启了认证，请填写 WebSocket 密码")
-        obs_password_card.load("ic_fluent_key_filled")
+        # ── qfluentwidgets SettingCard sub-settings ──────
+        obs_password_card = SettingCard(FluentIcon.FINGERPRINT, "OBS 密码", "如果开启了认证，请填写 WebSocket 密码", parent=self)
         self._obs_password_input = MacLineEdit(secret=True)
         self._obs_password_input.setFixedSize(220, 32)
         self._obs_password_input.setEchoMode(QLineEdit.Password)
-        obs_password_card.addWidget(self._obs_password_input)
-        container.addWidget(obs_password_card)
+        obs_password_card.hBoxLayout.addWidget(self._obs_password_input, 0, Qt.AlignRight)
+        patch_setting_card_padding(obs_password_card)
+        container_layout.addWidget(obs_password_card)
 
-        obs_main_scene_card = SiOptionCardLinear(self)
-        obs_main_scene_card.setTitle("主场景", "动作结束后自动切回这个主场景")
-        obs_main_scene_card.load("ic_fluent_home_filled")
+        obs_main_scene_card = SettingCard(FluentIcon.HOME, "主场景", "动作结束后自动切回这个主场景", parent=self)
         self._obs_main_scene_input = MacLineEdit()
         self._obs_main_scene_input.setFixedSize(220, 32)
-        obs_main_scene_card.addWidget(self._obs_main_scene_input)
-        container.addWidget(obs_main_scene_card)
+        obs_main_scene_card.hBoxLayout.addWidget(self._obs_main_scene_input, 0, Qt.AlignRight)
+        patch_setting_card_padding(obs_main_scene_card)
+        container_layout.addWidget(obs_main_scene_card)
 
-        obs_ignore_card = SiOptionCardLinear(self)
-        obs_ignore_card.setTitle("播放中忽略新触发", "开启后，动作播放期间不会再响应新的关键词")
-        obs_ignore_card.load("ic_fluent_arrow_repeat_all_filled")
+        obs_ignore_card = SettingCard(FluentIcon.SYNC, "播放中忽略新触发", "开启后，动作播放期间不会再响应新的关键词", parent=self)
         self._obs_ignore_switch = SiSwitch(self)
         self._obs_ignore_switch.setChecked(DEFAULT_OBS_ACTION_SETTINGS.ignore_during_playback)
-        obs_ignore_card.addWidget(self._obs_ignore_switch)
-        container.addWidget(obs_ignore_card)
+        obs_ignore_card.hBoxLayout.addWidget(self._obs_ignore_switch, 0, Qt.AlignRight)
+        patch_setting_card_padding(obs_ignore_card)
+        container_layout.addWidget(obs_ignore_card)
 
-        global_cd_card = SiOptionCardLinear(self)
-        global_cd_card.setTitle("全局冷却", "动作播完后，整套动作系统暂停触发的时间")
-        global_cd_card.load("ic_fluent_timer_filled")
+        global_cd_card = SettingCard(FluentIcon.STOP_WATCH, "全局冷却", "动作播完后，整套动作系统暂停触发的时间", parent=self)
         self._obs_global_cooldown_spin = MacSpinBox()
         self._obs_global_cooldown_spin.setRange(0, 3600)
         self._obs_global_cooldown_spin.setSuffix(" 秒")
         self._obs_global_cooldown_spin.setFixedSize(110, 32)
         self._obs_global_cooldown_spin.setValue(DEFAULT_OBS_ACTION_SETTINGS.global_cooldown_sec)
-        global_cd_card.addWidget(self._obs_global_cooldown_spin)
-        container.addWidget(global_cd_card)
+        global_cd_card.hBoxLayout.addWidget(self._obs_global_cooldown_spin, 0, Qt.AlignRight)
+        patch_setting_card_padding(global_cd_card)
+        container_layout.addWidget(global_cd_card)
 
-        match_window_card = SiOptionCardLinear(self)
-        match_window_card.setTitle("统计窗口", "在这个时间窗口里累计关键词命中次数")
-        match_window_card.load("ic_fluent_window_filled")
+        match_window_card = SettingCard(FluentIcon.APPLICATION, "统计窗口", "在这个时间窗口里累计关键词命中次数", parent=self)
         self._obs_match_window_spin = MacSpinBox()
         self._obs_match_window_spin.setRange(1, 3600)
         self._obs_match_window_spin.setSuffix(" 秒")
         self._obs_match_window_spin.setFixedSize(110, 32)
         self._obs_match_window_spin.setValue(DEFAULT_OBS_ACTION_SETTINGS.match_window_sec)
-        match_window_card.addWidget(self._obs_match_window_spin)
-        container.addWidget(match_window_card)
+        match_window_card.hBoxLayout.addWidget(self._obs_match_window_spin, 0, Qt.AlignRight)
+        patch_setting_card_padding(match_window_card)
+        container_layout.addWidget(match_window_card)
 
-        min_hits_card = SiOptionCardLinear(self)
-        min_hits_card.setTitle("最少命中次数", "达到这个命中次数后才真正触发动作")
-        min_hits_card.load("ic_fluent_number_circle_2_filled")
+        min_hits_card = SettingCard(FluentIcon.INFO, "最少命中次数", "达到这个命中次数后才真正触发动作", parent=self)
         self._obs_min_hits_spin = MacSpinBox()
         self._obs_min_hits_spin.setRange(1, 20)
         self._obs_min_hits_spin.setFixedSize(90, 32)
         self._obs_min_hits_spin.setValue(DEFAULT_OBS_ACTION_SETTINGS.min_hits)
-        min_hits_card.addWidget(self._obs_min_hits_spin)
-        container.addWidget(min_hits_card)
+        min_hits_card.hBoxLayout.addWidget(self._obs_min_hits_spin, 0, Qt.AlignRight)
+        patch_setting_card_padding(min_hits_card)
+        container_layout.addWidget(min_hits_card)
 
         # ── Rules entry card ─────────────────────────────
-        container.addTitle("动作规则库")
+        _title = QLabel("动作规则库", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
         self._rules_entry_panel = MacCard(self)
         self._rules_entry_panel.setMinimumHeight(128)
         self._rules_summary_label = QLabel()
@@ -203,23 +192,27 @@ class ObsActionPage(SiPage):
         self._manage_rules_btn.clicked.connect(self._on_manage_rules)
         rules_button_row.addWidget(self._manage_rules_btn)
         self._rules_entry_panel.body().addLayout(rules_button_row)
-        container.addWidget(self._rules_entry_panel)
+        container_layout.addWidget(self._rules_entry_panel)
 
         # ── Save / Reset ─────────────────────────────────
-        container.addTitle("操作")
-        btn_area = SiDenseHContainer(self)
+        _title = QLabel("操作", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
+        btn_area = QWidget(self)
+        btn_layout = QHBoxLayout(btn_area)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
         btn_area.setFixedHeight(36)
-        self._save_btn = SiPushButton(self)
-        self._save_btn.resize(100, 28)
-        self._save_btn.attachment().setText("保存配置")
+        self._save_btn = PrimaryPushButton("保存配置", parent=self)
+        self._save_btn.setFixedSize(100, 28)
         self._save_btn.clicked.connect(self._on_save)
-        btn_area.addWidget(self._save_btn)
-        self._reset_btn = SiPushButton(self)
-        self._reset_btn.resize(100, 28)
-        self._reset_btn.attachment().setText("恢复默认")
+        btn_layout.addWidget(self._save_btn)
+        self._reset_btn = PushButton("恢复默认", parent=self)
+        self._reset_btn.setFixedSize(100, 28)
         self._reset_btn.clicked.connect(self._on_reset)
-        btn_area.addWidget(self._reset_btn)
-        container.addWidget(btn_area)
+        btn_layout.addWidget(self._reset_btn)
+        btn_layout.addStretch(1)
+        container_layout.addWidget(btn_area)
 
         self.setAttachment(container)
         self._refresh_rules_summary()

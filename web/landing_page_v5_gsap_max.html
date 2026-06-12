@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Aiszr - AI 数字人直播平台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        :root{
+            --white:#ffffff;--black:#0a0a0a;--text:#1a1a1a;
+            --text-sec:#888;--accent:#0066ff;--accent-light:#e8f0ff;
+            --green:#22c55e;--red:#ef4444;--amber:#f59e0b;
+            --gray-1:#f5f5f7;--gray-2:#e8e8ed;
+            --radius:28px;--mono:'JetBrains Mono',monospace;
+        }
+        html{scroll-behavior:smooth}
+        body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;background:var(--white);color:var(--text);overflow-x:hidden;line-height:1.5;-webkit-font-smoothing:antialiased}
+
+        /* Subtle dot grid */
+        body::before{content:'';position:fixed;inset:0;background-image:radial-gradient(circle,rgba(0,0,0,.04) 1px,transparent 1px);background-size:32px 32px;pointer-events:none;z-index:0;opacity:.6}
+
+        /* Custom Cursor */
+        *{cursor:none!important}
+        .cursor-dot{position:fixed;width:6px;height:6px;background:var(--black);border-radius:50%;pointer-events:none;z-index:9999;mix-blend-mode:difference;transition:width .15s,height .15s,background .15s}
+        .cursor-dot.clicking{width:10px;height:10px;background:var(--accent)}
+        .cursor-ring{position:fixed;width:36px;height:36px;border:1.5px solid rgba(0,102,255,.2);border-radius:50%;pointer-events:none;z-index:9998;transition:width .4s cubic-bezier(.23,1,.32,1),height .4s cubic-bezier(.23,1,.32,1),border-color .3s,background .3s,opacity .3s}
+        .cursor-ring.hover{width:60px;height:60px;border-color:rgba(0,102,255,.35);background:rgba(0,102,255,.04)}
+        .cursor-ring.clicking{width:28px;height:28px;border-color:var(--accent)}
+        #particle-canvas{position:fixed;inset:0;pointer-events:none;z-index:9997}
+
+        /* ========== LOADER ========== */
+        .loader{position:fixed;inset:0;background:var(--black);z-index:10000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:28px}
+        .loader-text{font-family:'Syne',sans-serif;font-weight:800;font-size:4.5rem;color:var(--white);letter-spacing:-.04em;overflow:hidden;display:flex;gap:2px}
+        .loader-text span{display:inline-block;opacity:0;transform:translateY(110%) rotateX(-80deg)}
+        .loader-sub{font-family:var(--mono);font-size:.7rem;color:rgba(255,255,255,.25);letter-spacing:5px;text-transform:uppercase;opacity:0}
+        .loader-bar{width:180px;height:2px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden}
+        .loader-bar-fill{width:0%;height:100%;background:linear-gradient(90deg,var(--accent),#7c3aed);border-radius:2px;box-shadow:0 0 16px rgba(0,102,255,.5)}
+        .loader-count{font-family:var(--mono);font-size:.7rem;color:rgba(255,255,255,.2);position:absolute;bottom:40px;letter-spacing:3px}
+
+        /* ========== NAV ========== */
+        nav{position:fixed;top:0;width:100%;height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 48px;z-index:1000;transition:all .5s cubic-bezier(.23,1,.32,1)}
+        nav.scrolled{background:rgba(255,255,255,.9);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-bottom:1px solid rgba(0,0,0,.05);box-shadow:0 1px 24px rgba(0,0,0,.03)}
+        .nav-logo{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;color:var(--text);letter-spacing:-.02em}
+        .nav-links{display:flex;gap:36px;list-style:none}
+        .nav-links a{color:var(--text-sec);text-decoration:none;font-size:.88rem;font-weight:500;transition:color .3s;position:relative;padding:4px 0}
+        .nav-links a::after{content:'';position:absolute;bottom:0;left:0;width:0;height:1.5px;background:var(--accent);transition:width .4s cubic-bezier(.23,1,.32,1);border-radius:1px}
+        .nav-links a:hover{color:var(--text)}
+        .nav-links a:hover::after{width:100%}
+
+        /* ========== HERO ========== */
+        .hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:120px 48px 80px;position:relative;overflow:hidden}
+        .hero-orb{position:absolute;border-radius:50%;filter:blur(100px);pointer-events:none;will-change:transform}
+        .hero-orb-1{width:650px;height:650px;background:radial-gradient(circle,rgba(0,102,255,.1),transparent 70%);top:-120px;right:-120px}
+        .hero-orb-2{width:450px;height:450px;background:radial-gradient(circle,rgba(124,58,237,.07),transparent 70%);bottom:-30px;left:-120px}
+        .hero-orb-3{width:300px;height:300px;background:radial-gradient(circle,rgba(34,197,94,.05),transparent 70%);top:38%;left:58%}
+        .hero-tag{display:inline-flex;align-items:center;gap:10px;padding:10px 22px;background:rgba(255,255,255,.5);backdrop-filter:blur(12px);border:1px solid rgba(0,0,0,.05);border-radius:100px;font-size:.82rem;font-weight:500;color:var(--text-sec);margin-bottom:36px;opacity:0;transform:translateY(20px)}
+        .hero-tag .pulse{width:6px;height:6px;background:var(--green);border-radius:50%;animation:pulse-dot 2s ease-in-out infinite}
+        @keyframes pulse-dot{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.4)}50%{opacity:.7;box-shadow:0 0 0 6px rgba(34,197,94,0)}}
+        .hero-brand{font-family:var(--mono);font-size:.68rem;font-weight:600;letter-spacing:8px;text-transform:uppercase;color:var(--text-sec);margin-bottom:20px;opacity:0;transform:translateY(15px)}
+        .hero h1{font-family:'Syne',sans-serif;font-size:clamp(3rem,7vw,6.5rem);font-weight:800;letter-spacing:-.04em;line-height:1.05;margin-bottom:32px;position:relative;padding:0 16px}
+        .hero h1 .line{display:block}
+        .hero h1 .italic{color:var(--accent)}
+        .hero-sub{font-size:1.2rem;color:var(--text-sec);max-width:480px;line-height:1.85;margin-bottom:48px;position:relative;opacity:0;transform:translateY(20px)}
+        .hero-actions{display:flex;gap:16px;position:relative;opacity:0;transform:translateY(20px)}
+
+        /* ========== BUTTONS ========== */
+        .btn{display:inline-flex;align-items:center;gap:10px;padding:17px 38px;border-radius:100px;font-size:.95rem;font-weight:600;text-decoration:none;border:none;cursor:pointer;transition:transform .4s cubic-bezier(.23,1,.32,1),box-shadow .4s;-webkit-tap-highlight-color:transparent;font-family:'DM Sans',sans-serif;position:relative;overflow:hidden}
+        .btn:active{transform:scale(.96)!important}
+        .btn-primary{background:var(--black);color:var(--white)}
+        .btn-primary:hover{transform:translateY(-2px);box-shadow:0 10px 36px rgba(0,0,0,.25)}
+        .btn-ghost{background:rgba(255,255,255,.5);backdrop-filter:blur(8px);color:var(--text);border:1px solid rgba(0,0,0,.08)}
+        .btn-ghost:hover{border-color:var(--text);transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.06)}
+        .btn-arrow{transition:transform .3s cubic-bezier(.23,1,.32,1);display:inline-block}
+        .btn:hover .btn-arrow{transform:translateX(5px)}
+
+        /* ========== MARQUEE ========== */
+        .marquee{padding:48px 0;overflow:hidden;border-top:1px solid var(--gray-2);border-bottom:1px solid var(--gray-2);position:relative}
+        .marquee::before,.marquee::after{content:'';position:absolute;top:0;bottom:0;width:140px;z-index:2;pointer-events:none}
+        .marquee::before{left:0;background:linear-gradient(90deg,var(--white),transparent)}
+        .marquee::after{right:0;background:linear-gradient(-90deg,var(--white),transparent)}
+        .marquee-track{display:flex;gap:52px;animation:marquee 35s linear infinite;width:max-content}
+        .marquee-item{font-size:1rem;font-weight:600;color:var(--gray-2);white-space:nowrap;display:flex;align-items:center;gap:18px;transition:color .4s}
+        .marquee-item:hover{color:var(--text)}
+        .marquee-item .sep{width:4px;height:4px;background:var(--gray-2);border-radius:50%;transition:all .4s cubic-bezier(.23,1,.32,1)}
+        .marquee-item:hover .sep{background:var(--accent);transform:scale(1.8);box-shadow:0 0 6px rgba(0,102,255,.3)}
+        @keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+        /* ========== SHARED ========== */
+        .section-eyebrow{font-family:var(--mono);font-size:.72rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:3px;margin-bottom:14px}
+        .section-title{font-family:'Syne',sans-serif;font-size:clamp(2.2rem,4.5vw,3.8rem);font-weight:800;letter-spacing:-.04em;line-height:1.05;margin-bottom:14px}
+        .section-desc{font-size:1.05rem;color:var(--text-sec);max-width:480px;line-height:1.75;margin-bottom:60px}
+
+        /* ========== BENTO ========== */
+        .bento{padding:130px 24px;max-width:1100px;margin:0 auto;position:relative;z-index:1}
+        .bento-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+        .bento-card{background:var(--gray-1);border-radius:var(--radius);padding:38px 26px;position:relative;overflow:hidden;cursor:default;min-height:230px;display:flex;flex-direction:column;border:1px solid rgba(0,0,0,.04);transition:all .6s cubic-bezier(.23,1,.32,1);will-change:transform}
+        .bento-card:hover{border-color:rgba(0,0,0,.06);box-shadow:0 8px 32px rgba(0,0,0,.06),0 0 0 1px rgba(0,0,0,.03)}
+        .bento-icon{width:50px;height:50px;border-radius:15px;display:flex;align-items:center;justify-content:center;margin-bottom:20px;flex-shrink:0;transition:all .5s cubic-bezier(.23,1,.32,1)}
+        .bento-card:hover .bento-icon{transform:scale(1.12) rotate(-4deg) translateY(-2px)}
+        .bento-icon svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+        .bento-card h3{font-family:'Syne',sans-serif;font-size:1.05rem;font-weight:700;margin-bottom:8px;letter-spacing:-.01em}
+        .bento-card p{font-size:.88rem;color:var(--text-sec);line-height:1.7}
+
+        /* ========== STATS ========== */
+        .stats{padding:100px 24px;background:var(--black);color:var(--white);position:relative;overflow:hidden}
+        .stats::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 25% 50%,rgba(0,102,255,.08),transparent 50%),radial-gradient(ellipse at 75% 50%,rgba(124,58,237,.05),transparent 50%);pointer-events:none}
+        .stats-inner{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:32px;text-align:center;position:relative;z-index:1}
+        .stat-num{font-family:'DM Sans',sans-serif;font-size:clamp(2.8rem,5vw,4.2rem);font-weight:700;letter-spacing:-.02em;margin-bottom:10px;display:inline-block;background:linear-gradient(180deg,#fff 30%,rgba(255,255,255,.5));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+        .stat-label{font-size:.82rem;color:rgba(255,255,255,.35);font-weight:500}
+        .stat-item{position:relative}
+        .stat-item::after{content:'';position:absolute;right:0;top:20%;height:60%;width:1px;background:rgba(255,255,255,.05)}
+        .stat-item:last-child::after{display:none}
+
+        /* ========== SHOWCASE ========== */
+        .showcase-section{padding:130px 0;overflow:hidden;position:relative}
+        .showcase-header{padding:0 48px;margin-bottom:64px}
+        .showcase-track{display:flex;gap:24px;padding:0 48px;width:max-content}
+        .showcase-card{width:420px;min-height:480px;border-radius:var(--radius);padding:40px;display:flex;flex-direction:column;justify-content:flex-end;position:relative;overflow:hidden;flex-shrink:0;cursor:default;transition:all .6s cubic-bezier(.23,1,.32,1)}
+        .showcase-card:hover{transform:translateY(-6px)}
+        .showcase-card.dark{background:var(--black);color:var(--white)}
+        .showcase-card.light{background:var(--gray-1);color:var(--text)}
+        .showcase-card.blue{background:linear-gradient(135deg,var(--accent),#4f46e5);color:var(--white)}
+        .showcase-card .card-num{font-family:'Syne',sans-serif;font-size:7rem;font-weight:800;position:absolute;top:20px;right:28px;opacity:.05;line-height:1}
+        .showcase-card .card-tag{font-family:var(--mono);font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:2px;opacity:.45;margin-bottom:12px}
+        .showcase-card h3{font-family:'Syne',sans-serif;font-size:2rem;font-weight:700;letter-spacing:-.03em;line-height:1.15;margin-bottom:12px}
+        .showcase-card p{font-size:.92rem;opacity:.5;line-height:1.65;max-width:300px}
+        .showcase-card .card-glow{position:absolute;width:220px;height:220px;border-radius:50%;filter:blur(60px);opacity:0;transition:opacity .5s;pointer-events:none}
+        .showcase-card:hover .card-glow{opacity:.18}
+        .showcase-card.dark .card-glow{background:var(--accent)}
+        .showcase-card.blue .card-glow{background:rgba(255,255,255,.4)}
+        .showcase-card.light .card-glow{background:var(--accent)}
+        .showcase-card::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(0,0,0,.12));pointer-events:none;border-radius:inherit}
+        @media(max-width:768px){.showcase-card{width:300px;min-height:360px}}
+
+        /* ========== DANMAKU ========== */
+        .danmaku-section{padding:130px 24px;max-width:1000px;margin:0 auto;position:relative;z-index:1}
+        .danmaku-demo{background:var(--gray-1);border-radius:var(--radius);padding:48px;position:relative;overflow:hidden;min-height:420px}
+        .danmaku-demo::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),#7c3aed,transparent);opacity:.35}
+        .danmaku-demo-header{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+        .danmaku-dot{width:8px;height:8px;background:var(--red);border-radius:50%;animation:pulse-dot 1.5s ease-in-out infinite}
+        .danmaku-demo-title{font-weight:600;font-size:.9rem}
+        .danmaku-container{position:relative;height:300px;overflow:hidden}
+        .danmaku-msg{position:absolute;padding:9px 18px;background:var(--white);border-radius:100px;font-size:.85rem;font-weight:500;white-space:nowrap;box-shadow:0 3px 12px rgba(0,0,0,.05);opacity:0;border:1px solid rgba(0,0,0,.03)}
+        .danmaku-msg .nickname{color:var(--accent);font-weight:600;margin-right:6px}
+        .danmaku-ai-reply{position:absolute;right:24px;padding:13px 22px;background:linear-gradient(135deg,var(--accent),#4f46e5);color:var(--white);border-radius:16px 16px 4px 16px;font-size:.88rem;max-width:320px;opacity:0;box-shadow:0 6px 24px rgba(0,102,255,.25)}
+
+        /* ========== TERMINAL ========== */
+        .terminal-section{padding:130px 24px;max-width:880px;margin:0 auto;position:relative;z-index:1}
+        .terminal{background:#1e1e2e;border-radius:18px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.3)}
+        .terminal-bar{display:flex;align-items:center;gap:8px;padding:14px 20px;background:#181825}
+        .terminal-dot{width:12px;height:12px;border-radius:50%}
+        .terminal-dot.r{background:#f38ba8}.terminal-dot.y{background:#f9e2af}.terminal-dot.g{background:#a6e3a1}
+        .terminal-title{color:#6c7086;font-size:.78rem;font-family:var(--mono);margin-left:8px}
+        .terminal-body{padding:24px;font-family:var(--mono);font-size:.82rem;line-height:1.85;color:#cdd6f4;min-height:320px;position:relative}
+        .terminal-body::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.02) 2px,rgba(0,0,0,.02) 4px);pointer-events:none;border-radius:0 0 18px 18px}
+        .terminal-line{opacity:0;transform:translateY(6px)}
+        .terminal-line .prompt{color:#a6e3a1}.terminal-line .cmd{color:#89b4fa}
+        .terminal-line .comment{color:#6c7086}.terminal-line .success{color:#a6e3a1}
+        .terminal-line .warn{color:#f9e2af}.terminal-line .info{color:#89dceb}.terminal-line .accent{color:#cba6f7}
+        .terminal-cursor{display:inline-block;width:8px;height:16px;background:#cdd6f4;animation:blink 1s step-end infinite;vertical-align:text-bottom}
+        @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+        /* ========== ARCHITECTURE ========== */
+        .arch-section{padding:130px 24px;max-width:1100px;margin:0 auto;position:relative;z-index:1}
+        .arch-pipeline{margin-top:64px;position:relative;padding:0 20px}
+        .arch-pipeline::before{content:'';position:absolute;top:50%;left:60px;right:60px;height:2px;background:var(--gray-2);transform:translateY(-50%);z-index:0}
+        .arch-pipeline::after{content:'';position:absolute;top:50%;left:60px;right:60px;height:2px;background:repeating-linear-gradient(90deg,var(--accent) 0,var(--accent) 8px,transparent 8px,transparent 20px);opacity:.45;transform:translateY(-50%);z-index:0;animation:flowMove 1.4s linear infinite}
+        @keyframes flowMove{0%{background-position:0 0}100%{background-position:20px 0}}
+        .arch-nodes{display:flex;justify-content:space-between;position:relative;z-index:1}
+        .arch-node{background:var(--white);border:1px solid var(--gray-2);border-radius:20px;padding:26px 18px;width:145px;text-align:center;transition:all .5s cubic-bezier(.23,1,.32,1);cursor:default;box-shadow:0 2px 12px rgba(0,0,0,.03)}
+        .arch-node:hover{transform:translateY(-7px);box-shadow:0 14px 40px rgba(0,0,0,.08);border-color:var(--accent)}
+        .arch-node .icon{width:50px;height:50px;border-radius:15px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;transition:all .4s cubic-bezier(.23,1,.32,1)}
+        .arch-node:hover .icon{transform:scale(1.12) rotate(-3deg)}
+        .arch-node .icon svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+        .arch-node .name{font-family:'Syne',sans-serif;font-weight:700;font-size:.82rem;margin-bottom:3px}
+        .arch-node .desc{font-size:.7rem;color:var(--text-sec)}
+        .arch-node.playwright .icon{background:#e0f2fe;color:#0284c7}
+        .arch-node.decoder .icon{background:#fef3c7;color:#d97706}
+        .arch-node.ai .icon{background:#ede9fe;color:#7c3aed}
+        .arch-node.tts .icon{background:#dcfce7;color:#16a34a}
+        .arch-node.obs .icon{background:#fce7f3;color:#db2777}
+        .arch-node.rtmp .icon{background:#fff7ed;color:#ea580c}
+        @media(max-width:768px){
+            .arch-nodes{flex-wrap:wrap;gap:12px;justify-content:center}
+            .arch-node{width:calc(50% - 6px)}
+            .arch-pipeline::before,.arch-pipeline::after{display:none}
+        }
+
+        /* ========== TABS ========== */
+        .tabs-section{padding:130px 24px;max-width:1000px;margin:0 auto;position:relative;z-index:1}
+        .tabs-nav{display:flex;gap:8px;margin-bottom:48px;flex-wrap:wrap}
+        .tab-btn{padding:11px 26px;border-radius:100px;border:1px solid var(--gray-2);background:transparent;font-size:.88rem;font-weight:500;cursor:pointer;transition:all .35s cubic-bezier(.23,1,.32,1);font-family:'DM Sans',sans-serif;color:var(--text-sec)}
+        .tab-btn.active{background:var(--black);color:var(--white);border-color:var(--black);box-shadow:0 4px 16px rgba(0,0,0,.18)}
+        .tab-btn:hover:not(.active){border-color:var(--text);color:var(--text)}
+        .tab-panel{display:none}
+        .tab-panel.active{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
+        .tab-visual{background:var(--gray-1);border-radius:var(--radius);height:320px;display:flex;align-items:center;justify-content:center;font-size:4rem;position:relative;overflow:hidden;transition:all .5s cubic-bezier(.23,1,.32,1)}
+        .tab-visual::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 30% 30%,rgba(0,102,255,.03),transparent 60%);pointer-events:none}
+        .tab-visual:hover{transform:scale(1.015);box-shadow:0 12px 40px rgba(0,0,0,.07)}
+        .tab-content h3{font-family:'Syne',sans-serif;font-size:2rem;font-weight:700;margin-bottom:14px;letter-spacing:-.02em}
+        .tab-content p{color:var(--text-sec);line-height:1.75;margin-bottom:24px}
+        .tab-content ul{list-style:none}
+        .tab-content li{padding:9px 0;font-size:.9rem;color:var(--text-sec);display:flex;align-items:center;gap:10px}
+        .tab-content .check{color:var(--green);font-weight:700}
+
+        /* ========== ECOSYSTEM ========== */
+        .ecosystem{padding:110px 24px;text-align:center;position:relative;z-index:1}
+        .eco-grid{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;margin-top:48px}
+        .eco-item{width:90px;height:90px;background:var(--gray-1);border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;transition:all .5s cubic-bezier(.23,1,.32,1);cursor:default;border:1px solid transparent}
+        .eco-item svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+        .eco-item span{font-size:.65rem;font-weight:600;color:var(--text-sec);letter-spacing:.3px}
+        .eco-item:hover{transform:translateY(-7px);border-color:var(--gray-2);box-shadow:0 10px 28px rgba(0,0,0,.06)}
+
+        /* ========== CTA ========== */
+        .cta{padding:170px 24px;text-align:center;position:relative}
+        .cta-orb{position:absolute;width:650px;height:650px;border-radius:50%;background:radial-gradient(circle,rgba(0,102,255,.08),transparent 65%);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;filter:blur(50px);animation:orbFloat 8s ease-in-out infinite}
+        @keyframes orbFloat{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-50%) scale(1.12)}}
+        .cta h2{font-family:'Syne',sans-serif;font-size:clamp(2.5rem,6vw,4.8rem);font-weight:800;letter-spacing:-.04em;line-height:1.1;margin-bottom:24px;position:relative}
+        .cta h2 em{color:var(--accent)}
+        .cta p{font-size:1.1rem;color:var(--text-sec);margin-bottom:48px;position:relative}
+        .cta .btn{position:relative}
+
+        /* ========== FOOTER ========== */
+        footer{padding:48px;border-top:1px solid var(--gray-2);display:flex;justify-content:space-between;align-items:center;font-size:.85rem;color:var(--text-sec);position:relative;z-index:1}
+        .footer-links{display:flex;gap:24px}
+        .footer-links a{color:var(--text-sec);text-decoration:none;transition:color .3s}
+        .footer-links a:hover{color:var(--text)}
+
+        /* ========== RESPONSIVE ========== */
+        @media(max-width:768px){
+            nav{padding:0 20px}.nav-links{display:none}
+            .bento-grid{grid-template-columns:1fr}
+            .stats-inner{grid-template-columns:repeat(2,1fr)}
+            .tab-panel.active{grid-template-columns:1fr}
+            .cursor-dot,.cursor-ring{display:none}*{cursor:auto!important}
+            footer{flex-direction:column;gap:16px;text-align:center}
+            .eco-grid{gap:14px}.eco-item{width:76px;height:76px}.eco-item svg{width:22px;height:22px}
+        }
+
+        /* ========== FLOW PARTICLES ========== */
+        #flow-canvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1}
+
+        /* ========== UNIQUE SECTION BACKGROUNDS ========== */
+        .danmaku-section .section-eyebrow::before{content:'';display:inline-block;width:24px;height:1px;background:var(--accent);vertical-align:middle;margin-right:12px}
+        .terminal-section .section-eyebrow::after{content:'';display:inline-block;width:24px;height:1px;background:var(--accent);vertical-align:middle;margin-left:12px}
+    </style>
+</head>
+<body>
+    <div class="cursor-dot"></div>
+    <div class="cursor-ring"></div>
+    <canvas id="particle-canvas"></canvas>
+
+    <!-- Loader -->
+    <div class="loader">
+        <div class="loader-text"><span>A</span><span>i</span><span>s</span><span>z</span><span>r</span><span>.</span></div>
+        <div class="loader-sub">AI DIGITAL HUMAN PLATFORM</div>
+        <div class="loader-bar"><div class="loader-bar-fill"></div></div>
+        <div class="loader-count">0%</div>
+    </div>
+
+    <!-- Nav -->
+    <nav>
+        <div class="nav-logo">Aiszr.</div>
+        <ul class="nav-links">
+            <li><a href="#features">功能</a></li>
+            <li><a href="#arch">架构</a></li>
+            <li><a href="#showcase">亮点</a></li>
+            <li><a href="#demo">演示</a></li>
+            <li><a href="#terminal">快速开始</a></li>
+            <li><a href="#cta">下载</a></li>
+        </ul>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="hero-orb hero-orb-1"></div>
+        <div class="hero-orb hero-orb-2"></div>
+        <div class="hero-orb hero-orb-3"></div>
+        <div class="hero-tag"><span class="pulse"></span>AI 驱动的直播新范式</div>
+        <div class="hero-brand">Aiszr</div>
+        <h1>
+            <span class="line" data-reveal>数字人</span>
+            <span class="line italic" data-reveal>实时互动</span>
+        </h1>
+        <p class="hero-sub">智能回复、数字人合成、OBS 联动、RTMP 推流。<br>一个平台，搞定直播间的一切。</p>
+        <div class="hero-actions">
+            <a href="#cta" class="btn btn-primary" data-magnetic>立即体验 <span class="btn-arrow">&rarr;</span></a>
+            <a href="#features" class="btn btn-ghost" data-magnetic>了解更多</a>
+        </div>
+    </section>
+
+    <!-- Marquee -->
+    <div class="marquee">
+        <div class="marquee-track">
+            <span class="marquee-item">AI 智能回复 <span class="sep"></span></span>
+            <span class="marquee-item">数字人合成 <span class="sep"></span></span>
+            <span class="marquee-item">弹幕实时抓取 <span class="sep"></span></span>
+            <span class="marquee-item">OBS 关键词联动 <span class="sep"></span></span>
+            <span class="marquee-item">RTMP 推流 <span class="sep"></span></span>
+            <span class="marquee-item">本地部署 <span class="sep"></span></span>
+            <span class="marquee-item">DeepSeek 大模型 <span class="sep"></span></span>
+            <span class="marquee-item">Playwright 自动化 <span class="sep"></span></span>
+            <span class="marquee-item">AI 智能回复 <span class="sep"></span></span>
+            <span class="marquee-item">数字人合成 <span class="sep"></span></span>
+            <span class="marquee-item">弹幕实时抓取 <span class="sep"></span></span>
+            <span class="marquee-item">OBS 关键词联动 <span class="sep"></span></span>
+            <span class="marquee-item">RTMP 推流 <span class="sep"></span></span>
+            <span class="marquee-item">本地部署 <span class="sep"></span></span>
+            <span class="marquee-item">DeepSeek 大模型 <span class="sep"></span></span>
+            <span class="marquee-item">Playwright 自动化 <span class="sep"></span></span>
+        </div>
+    </div>
+
+    <!-- Bento Features -->
+    <section class="bento" id="features">
+        <div class="section-eyebrow">Core Features</div>
+        <h2 class="section-title">强大，却简单。</h2>
+        <p class="section-desc">从弹幕抓取到直播推流，每一步都为你准备好。</p>
+        <div class="bento-grid">
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#ede9fe;color:#7c3aed"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/><path d="M10 17v4"/><path d="M14 17v4"/></svg></div>
+                <h3>AI 智能回复</h3>
+                <p>DeepSeek 大模型驱动，实时语义分析，个性化回复，话术库 + 冷却节流。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#e0f2fe;color:#0284c7"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polygon points="10,9 16,12 10,15"/></svg></div>
+                <h3>数字人合成</h3>
+                <p>AI 语音 + 绿幕视频，口型同步、表情自然，7x24 不间断直播。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#dcfce7;color:#16a34a"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                <h3>弹幕实时抓取</h3>
+                <p>Playwright 驱动，&lt;90ms 延迟精准捕获弹幕、礼物、关注。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#fff7ed;color:#ea580c"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+                <h3>OBS 关键词联动</h3>
+                <p>关键词自动触发场景切换、音乐播放、特效触发。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#fce7f3;color:#db2777"><svg viewBox="0 0 24 24"><path d="M2 20h20"/><path d="M5 20v-8l7-5 7 5v8"/><rect x="9" y="13" width="6" height="7"/></svg></div>
+                <h3>完全本地化</h3>
+                <p>零云依赖，Python 3.10+ 开箱即用，隐私安全完全可控。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#fef3c7;color:#d97706"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+                <h3>HLS / RTMP 推流</h3>
+                <p>FFmpeg 高效推流，无缝对接 OBS，支持抖音、视频号。</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats">
+        <div class="stats-inner">
+            <div class="stat-item"><div class="stat-num" data-count="99">0%</div><div class="stat-label">弹幕捕获率</div></div>
+            <div class="stat-item"><div class="stat-num">&lt;90ms</div><div class="stat-label">端到端延迟</div></div>
+            <div class="stat-item"><div class="stat-num">24/7</div><div class="stat-label">稳定运行</div></div>
+            <div class="stat-item"><div class="stat-num">1+</div><div class="stat-label">并发直播间</div></div>
+        </div>
+    </section>
+
+    <!-- Architecture Diagram -->
+    <section class="arch-section" id="arch">
+        <div class="section-eyebrow">Architecture</div>
+        <h2 class="section-title">全链路自动化。</h2>
+        <p class="section-desc">从浏览器到 OBS，数据在模块间无缝流动。</p>
+        <div class="arch-pipeline" style="position:relative">
+            <canvas id="flow-canvas"></canvas>
+            <div class="arch-nodes">
+                <div class="arch-node playwright"><div class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div><div class="name">Playwright</div><div class="desc">浏览器自动化</div></div>
+                <div class="arch-node decoder"><div class="icon"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="name">Decoder</div><div class="desc">Protobuf 解码</div></div>
+                <div class="arch-node ai"><div class="icon"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg></div><div class="name">AI Engine</div><div class="desc">DeepSeek 大模型</div></div>
+                <div class="arch-node tts"><div class="icon"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></div><div class="name">TTS Worker</div><div class="desc">语音合成</div></div>
+                <div class="arch-node obs"><div class="icon"><svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div><div class="name">OBS Bridge</div><div class="desc">场景联动</div></div>
+                <div class="arch-node rtmp"><div class="icon"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><div class="name">RTMP Push</div><div class="desc">直播推流</div></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Horizontal Showcase -->
+    <section class="showcase-section" id="showcase">
+        <div class="showcase-header">
+            <div class="section-eyebrow">Highlights</div>
+            <h2 class="section-title">为直播而生。</h2>
+        </div>
+        <div class="showcase-track">
+            <div class="showcase-card dark"><div class="card-glow" style="top:20%;right:10%"></div><span class="card-num">01</span><div class="card-tag">智能回复</div><h3>每条弹幕<br>都值得回应</h3><p>AI 理解语义，生成个性化回复，让每个观众都感受到关注。</p></div>
+            <div class="showcase-card blue"><div class="card-glow" style="top:30%;left:20%"></div><span class="card-num">02</span><div class="card-tag">数字人</div><h3>你的虚拟<br>直播搭档</h3><p>口型同步、表情自然，7x24 小时不间断直播。</p></div>
+            <div class="showcase-card light"><div class="card-glow" style="bottom:20%;right:20%"></div><span class="card-num">03</span><div class="card-tag">极速响应</div><h3>90 毫秒<br>抓住每条弹幕</h3><p>WebSocket 拦截 + DOM 补偿，不漏掉任何一条互动。</p></div>
+            <div class="showcase-card dark"><div class="card-glow" style="top:10%;left:30%"></div><span class="card-num">04</span><div class="card-tag">OBS 联动</div><h3>关键词触发<br>一切可能</h3><p>场景切换、特效播放、音乐控制，一个关键词搞定。</p></div>
+            <div class="showcase-card blue"><div class="card-glow" style="bottom:10%;left:10%"></div><span class="card-num">05</span><div class="card-tag">RTMP 推流</div><h3>一键开播<br>全平台覆盖</h3><p>抖音、视频号，一个平台推流所有直播间。</p></div>
+            <div class="showcase-card light"><div class="card-glow" style="top:20%;right:30%"></div><span class="card-num">06</span><div class="card-tag">本地部署</div><h3>零云依赖<br>隐私可控</h3><p>Python 3.10+ 开箱即用，数据完全本地运行。</p></div>
+            <div class="showcase-card dark"><div class="card-glow" style="bottom:30%;right:10%"></div><span class="card-num">07</span><div class="card-tag">话术库</div><h3>自定义话术<br>精准匹配</h3><p>预设回复模板，按场景、用户分级自动匹配最佳话术。</p></div>
+            <div class="showcase-card blue"><div class="card-glow" style="top:10%;right:20%"></div><span class="card-num">08</span><div class="card-tag">多音色</div><h3>AI 语音合成<br>随心切换</h3><p>支持多供应商、多音色，主播助播角色自由定义。</p></div>
+        </div>
+    </section>
+
+    <!-- Danmaku Demo -->
+    <section class="danmaku-section" id="demo">
+        <div class="section-eyebrow">Live Demo</div>
+        <h2 class="section-title">实时互动，眼见为实。</h2>
+        <p class="section-desc">弹幕抓取 → AI 分析 → 智能回复，全链路可视化。</p>
+        <div class="danmaku-demo">
+            <div class="danmaku-demo-header"><div class="danmaku-dot"></div><div class="danmaku-demo-title">直播间弹幕流</div></div>
+            <div class="danmaku-container" id="danmaku-container"></div>
+        </div>
+    </section>
+
+    <!-- Terminal Quick Start -->
+    <section class="terminal-section" id="terminal">
+        <div class="section-eyebrow">Quick Start</div>
+        <h2 class="section-title">三行命令，开始直播。</h2>
+        <p class="section-desc">Python 3.10+，开箱即用。</p>
+        <div class="terminal">
+            <div class="terminal-bar"><div class="terminal-dot r"></div><div class="terminal-dot y"></div><div class="terminal-dot g"></div><span class="terminal-title"> Terminal — aiszr</span></div>
+            <div class="terminal-body" id="terminal-body"></div>
+        </div>
+    </section>
+
+    <!-- Feature Tabs -->
+    <section class="tabs-section" id="tabs">
+        <div class="section-eyebrow">Deep Dive</div>
+        <h2 class="section-title">深入了解。</h2>
+        <p class="section-desc">每个模块都经过精心打磨。</p>
+        <div class="tabs-nav">
+            <button class="tab-btn active" data-tab="0">弹幕抓取</button>
+            <button class="tab-btn" data-tab="1">AI 回复</button>
+            <button class="tab-btn" data-tab="2">数字人</button>
+            <button class="tab-btn" data-tab="3">OBS 联动</button>
+        </div>
+        <div class="tab-panel active" data-panel="0">
+            <div class="tab-visual" style="color:var(--accent)"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="13" y2="13"/></svg></div>
+            <div class="tab-content"><h3>弹幕抓取引擎</h3><p>基于 Playwright 的 WebSocket 拦截方案，无需逆向协议，稳定可靠。</p><ul><li><span class="check">✓</span> WebSocket 帧级拦截</li><li><span class="check">✓</span> DOM 补偿双通道</li><li><span class="check">✓</span> Protobuf 自动解码</li><li><span class="check">✓</span> 断线自动重连</li><li><span class="check">✓</span> &lt;90ms 端到端延迟</li></ul></div>
+        </div>
+        <div class="tab-panel" data-panel="1">
+            <div class="tab-visual" style="color:#7c3aed"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/><path d="M10 17v4"/><path d="M14 17v4"/></svg></div>
+            <div class="tab-content"><h3>AI 回复引擎</h3><p>DeepSeek 大模型驱动，理解弹幕意图，生成个性化回复。</p><ul><li><span class="check">✓</span> 语义理解 + 意图识别</li><li><span class="check">✓</span> 话术库自定义</li><li><span class="check">✓</span> 冷却节流防刷屏</li><li><span class="check">✓</span> 用户分级差异化回复</li><li><span class="check">✓</span> 短历史记忆上下文</li></ul></div>
+        </div>
+        <div class="tab-panel" data-panel="2">
+            <div class="tab-visual" style="color:#0284c7"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polygon points="10,9 16,12 10,15"/></svg></div>
+            <div class="tab-content"><h3>数字人系统</h3><p>AI 语音合成 + 绿幕视频，一体化生成数字人直播内容。</p><ul><li><span class="check">✓</span> 口型同步算法</li><li><span class="check">✓</span> 多音色切换</li><li><span class="check">✓</span> 绿幕抠像合成</li><li><span class="check">✓</span> 7x24 不间断运行</li><li><span class="check">✓</span> 支持自定义形象</li></ul></div>
+        </div>
+        <div class="tab-panel" data-panel="3">
+            <div class="tab-visual" style="color:#ea580c"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
+            <div class="tab-content"><h3>OBS 智能联动</h3><p>关键词检测 → 动作触发，全自动场控。</p><ul><li><span class="check">✓</span> 关键词命中阈值</li><li><span class="check">✓</span> 场景自动切换</li><li><span class="check">✓</span> 音乐/特效触发</li><li><span class="check">✓</span> 全局冷却防重复</li><li><span class="check">✓</span> WebSocket 远程控制</li></ul></div>
+        </div>
+    </section>
+
+    <!-- Ecosystem -->
+    <section class="ecosystem">
+        <div class="section-eyebrow">Ecosystem</div>
+        <h2 class="section-title">开放生态。</h2>
+        <p class="section-desc" style="margin-left:auto;margin-right:auto">支持主流平台与技术栈。</p>
+        <div class="eco-grid">
+            <div class="eco-item" title="抖音" style="color:#fe2c55"><svg viewBox="0 0 24 24"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg><span>抖音</span></div>
+            <div class="eco-item" title="视频号" style="color:#07c160"><svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg><span>视频号</span></div>
+            <div class="eco-item" title="OBS" style="color:#302e32"><svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg><span>OBS</span></div>
+            <div class="eco-item" title="DeepSeek" style="color:#4f46e5"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg><span>DeepSeek</span></div>
+            <div class="eco-item" title="Playwright" style="color:#2ead33"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Playwright</span></div>
+            <div class="eco-item" title="FFmpeg" style="color:#007808"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><span>FFmpeg</span></div>
+            <div class="eco-item" title="Python" style="color:#3776ab"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span>Python</span></div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta" id="cta">
+        <div class="cta-orb"></div>
+        <h2>开启你的<br><em>AI 直播时代</em></h2>
+        <p>免费下载，本地运行，零门槛上手。</p>
+        <a href="#" class="btn btn-primary" data-magnetic>立即下载 <span class="btn-arrow">&rarr;</span></a>
+    </section>
+
+    <footer>
+        <p>&copy; 2026 Aiszr. All rights reserved.</p>
+        <div class="footer-links"><a href="#">关于我们</a><a href="#">隐私政策</a><a href="#">文档</a><a href="#">联系</a></div>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollToPlugin.min.js"></script>
+    <script>
+    gsap.registerPlugin(ScrollTrigger,ScrollToPlugin);
+
+    /* ========== LOADER ========== */
+    const loaderTl=gsap.timeline({onComplete:()=>{document.querySelector('.loader').style.display='none';initPage()}});
+    loaderTl.to('.loader-text span',{opacity:1,y:0,rotationX:0,duration:.65,stagger:.07,ease:'back.out(2.2)'},0)
+        .to('.loader-sub',{opacity:1,duration:.5,ease:'power2.out'},.25)
+        .to('.loader-bar-fill',{width:'100%',duration:1.1,ease:'power2.inOut'},.15)
+        .to('.loader-count',{textContent:'100%',duration:1.1,ease:'power2.inOut',snap:{textContent:1}},.15)
+        .to('.loader',{opacity:0,duration:.5,ease:'power3.inOut'},'+=0.2')
+        .set('.loader',{display:'none'});
+
+    function initPage(){
+        /* ===== HERO: Char Split ===== */
+        function splitChars(el){
+            const t=el.textContent;el.innerHTML='';
+            [...t].forEach(ch=>{
+                const s=document.createElement('span');
+                s.style.display='inline-block';
+                s.style.opacity='0';
+                s.style.transform='translateY(40px)';
+                s.textContent=ch===' '?' ':ch;
+                el.appendChild(s);
+            });
+            return el.querySelectorAll('span');
+        }
+
+        const hc=[];
+        document.querySelectorAll('.hero h1 .line[data-reveal]').forEach(l=>hc.push(...splitChars(l)));
+
+        /* ===== HERO: Timeline ===== */
+        const heroTl=gsap.timeline({delay:.05});
+        heroTl.to('.hero-tag',{opacity:1,y:0,duration:.7,ease:'power3.out'})
+            .to('.hero-brand',{opacity:.5,y:0,duration:.6,ease:'power3.out'},'-=.4')
+            .to(hc,{opacity:1,y:0,duration:1.1,stagger:.04,ease:'power4.out'},'-=.3')
+            .to('.hero-sub',{opacity:1,y:0,duration:.8,ease:'power3.out'},'-=.5')
+            .to('.hero-actions',{opacity:1,y:0,duration:.7,ease:'back.out(1.5)'},'-=.4');
+
+        /* ===== HERO: Mouse Follow ===== */
+        const heroSection=document.querySelector('.hero');
+        heroSection.addEventListener('mousemove',e=>{
+            const r=heroSection.getBoundingClientRect();
+            const x=(e.clientX-r.left)/r.width-.5;
+            const y=(e.clientY-r.top)/r.height-.5;
+            gsap.to('.hero-orb-1',{x:x*25,y:y*18,duration:1.2,ease:'power2.out'});
+            gsap.to('.hero-orb-2',{x:x*-18,y:y*-12,duration:1.2,ease:'power2.out'});
+            gsap.to('.hero-orb-3',{x:x*12,y:y*20,duration:1.2,ease:'power2.out'});
+            gsap.to('.hero h1',{x:x*6,y:y*4,duration:1,ease:'power2.out'});
+        });
+        heroSection.addEventListener('mouseleave',()=>{
+            gsap.to('.hero-orb-1,.hero-orb-2,.hero-orb-3',{x:0,y:0,duration:1.5,ease:'elastic.out(1,.4)'});
+            gsap.to('.hero h1',{x:0,y:0,duration:1.2,ease:'elastic.out(1,.4)'});
+        });
+
+        /* ===== HERO: Scroll Parallax ===== */
+        gsap.to('.hero h1',{scrollTrigger:{trigger:'.hero',start:'top top',end:'bottom top',scrub:1},y:-50,opacity:.2});
+
+        /* ===== BENTO: UNIQUE — Stagger from random directions ===== */
+        const bentoCards=document.querySelectorAll('.bento-card');
+        const dirs=[{x:-60,y:40},{x:0,y:70},{x:60,y:40},{x:-60,y:-40},{x:0,y:-70},{x:60,y:-40}];
+        bentoCards.forEach((card,i)=>{
+            gsap.set(card,{opacity:0,x:dirs[i%6].x,y:dirs[i%6].y,rotation:dirs[i%6].x*.15,scale:.9});
+        });
+        ScrollTrigger.create({trigger:'.bento-grid',start:'top 82%',once:true,onEnter:()=>{
+            gsap.to(bentoCards,{opacity:1,x:0,y:0,rotation:0,scale:1,duration:.8,stagger:{each:.1,from:'random'},ease:'back.out(1.6)'});
+        }});
+
+        /* ===== SECTION TITLES: UNIQUE — clipPath reveal ===== */
+        gsap.utils.toArray('.section-eyebrow').forEach(el=>{
+            gsap.from(el,{opacity:0,x:-25,duration:.7,ease:'power3.out',scrollTrigger:{trigger:el,start:'top 88%'}});
+        });
+        gsap.utils.toArray('.section-title').forEach(el=>{
+            gsap.from(el,{opacity:0,y:50,clipPath:'inset(100% 0 0 0)',duration:1,ease:'power3.out',scrollTrigger:{trigger:el,start:'top 85%'}});
+        });
+        gsap.utils.toArray('.section-desc').forEach(el=>{
+            gsap.from(el,{opacity:0,y:25,duration:.7,ease:'power3.out',scrollTrigger:{trigger:el,start:'top 85%'}});
+        });
+
+        /* ===== STATS: UNIQUE — Scale up from center ===== */
+        gsap.from('.stat-item',{opacity:0,scale:.7,y:30,duration:.6,stagger:.15,ease:'back.out(1.8)',scrollTrigger:{trigger:'.stats',start:'top 80%'}});
+
+        const statsObs=new IntersectionObserver(entries=>{
+            entries.forEach(e=>{
+                if(!e.isIntersecting)return;
+                e.target.querySelectorAll('.stat-num[data-count]').forEach(el=>{
+                    const target=parseInt(el.dataset.count);
+                    const suffix=el.textContent.replace(/[0-9]/g,'');
+                    const dur=2200;const t0=performance.now();
+                    const tick=now=>{
+                        const p=Math.min((now-t0)/dur,1);
+                        const eased=1-Math.pow(1-p,4);
+                        el.textContent=Math.round(target*eased)+suffix;
+                        if(p<1)requestAnimationFrame(tick);
+                    };
+                    requestAnimationFrame(tick);
+                });
+                statsObs.unobserve(e.target);
+            });
+        },{threshold:.3});
+        const statsSec=document.querySelector('.stats');
+        if(statsSec)statsObs.observe(statsSec);
+
+        /* ===== ARCHITECTURE: UNIQUE — Left to right cascade ===== */
+        gsap.set('.arch-node',{opacity:0,x:-40,scale:.85});
+        ScrollTrigger.create({trigger:'.arch-pipeline',start:'top 85%',once:true,onEnter:()=>{
+            gsap.to('.arch-node',{opacity:1,x:0,scale:1,duration:.65,stagger:.1,ease:'power3.out'});
+        }});
+
+        /* ===== SHOWCASE: UNIQUE — Slow parallax, depth layering ===== */
+        const track=document.querySelector('.showcase-track');
+        if(track){
+            const tw=track.scrollWidth-innerWidth+96;
+            gsap.to(track,{x:-tw,ease:'none',scrollTrigger:{trigger:'.showcase-section',start:'top 10%',end:()=>'+'+tw*1.5,scrub:5,pin:true}});
+            track.querySelectorAll('.showcase-card').forEach((card,i)=>{
+                gsap.to(card,{y:(i%3===0?-25:i%3===1?15:-10),ease:'none',scrollTrigger:{trigger:'.showcase-section',start:'top bottom',end:'bottom top',scrub:true}});
+            });
+        }
+
+        /* ===== DANMAKU ===== */
+        const dd=[
+            {nick:'小明',msg:'这个产品多少钱？',delay:0,top:20},
+            {nick:'AI 助播',msg:'亲，这款今天特价 ¥99，买二送一哦！',ai:true,delay:1.8,top:20},
+            {nick:'花花',msg:'有优惠券吗',delay:3.5,top:90},
+            {nick:'AI 助播',msg:'有的呢～ 输入 "花花" 领取专属 5 折券',ai:true,delay:5,top:90},
+            {nick:'大壮',msg:'质量怎么样',delay:7,top:160},
+            {nick:'AI 助播',msg:'100% 好评率，支持 7 天无理由退换～',ai:true,delay:8.5,top:160},
+            {nick:'小美',msg:'已下单！',delay:10.5,top:230},
+            {nick:'AI 助播',msg:'感谢小美！已升级 VIP，终身 9 折',ai:true,delay:12,top:230},
+        ];
+        const dCont=document.getElementById('danmaku-container');
+        let dPlayed=false;
+        function playDanmaku(){
+            if(dPlayed)return;dPlayed=true;
+            dd.forEach(d=>{setTimeout(()=>{
+                const el=document.createElement('div');
+                el.className=d.ai?'danmaku-ai-reply':'danmaku-msg';
+                el.innerHTML=d.ai?d.msg:`<span class="nickname">${d.nick}</span>${d.msg}`;
+                el.style.top=d.top+'px';
+                dCont.appendChild(el);
+                gsap.fromTo(el,{opacity:0,x:d.ai?50:-50,scale:.85},{opacity:1,x:0,scale:1,duration:.55,ease:'back.out(1.8)'});
+            },d.delay*1000)});
+        }
+        ScrollTrigger.create({trigger:'.danmaku-demo',start:'top 70%',once:true,onEnter:playDanmaku});
+
+        /* ===== TERMINAL ===== */
+        const termLines=[
+            {text:'<span class="comment"># 安装 Aiszr</span>',delay:0},
+            {text:'<span class="prompt">$</span> <span class="cmd">pip install aiszr</span>',delay:.4},
+            {text:'',delay:1},
+            {text:'<span class="success">✓</span> <span class="info">Aiszr v1.2.0 installed successfully</span>',delay:1.5},
+            {text:'',delay:2},
+            {text:'<span class="comment"># 启动直播助手</span>',delay:2.2},
+            {text:'<span class="prompt">$</span> <span class="cmd">aiszr start</span>',delay:2.6},
+            {text:'',delay:3.2},
+            {text:'<span class="accent">╭──────────────────────────────────────╮</span>',delay:3.5},
+            {text:'<span class="accent">│</span>  <span class="success">Aiszr v1.2.0</span>  —  AI 数字人直播助手   <span class="accent">│</span>',delay:3.7},
+            {text:'<span class="accent">╰──────────────────────────────────────╯</span>',delay:3.9},
+            {text:'',delay:4.1},
+            {text:'<span class="success">✓</span> WebSocket server started on <span class="info">ws://localhost:8765</span>',delay:4.4},
+            {text:'<span class="success">✓</span> Playwright browser launched (<span class="info">Edge</span>)',delay:4.7},
+            {text:'<span class="success">✓</span> Waiting for Douyin login <span class="warn">[QR Scan]</span>...',delay:5},
+            {text:'<span class="success">✓</span> Login detected! Session ready.',delay:6},
+            {text:'<span class="success">✓</span> Danmaku capture started — <span class="info">&lt;90ms latency</span>',delay:6.5},
+            {text:'<span class="success">✓</span> AI reply engine online — <span class="info">DeepSeek</span>',delay:6.8},
+            {text:'<span class="success">✓</span> OBS bridge connected',delay:7.1},
+            {text:'',delay:7.3},
+            {text:'<span class="warn">🔴 LIVE</span> — All systems operational. <span class="success">Ready!</span>',delay:7.6},
+            {text:'',delay:7.9},
+            {text:'<span class="prompt">aiszr ▸</span> <span class="terminal-cursor"></span>',delay:8.2},
+        ];
+        let termPlayed=false;
+        function playTerminal(){
+            if(termPlayed)return;termPlayed=true;
+            const body=document.getElementById('terminal-body');
+            termLines.forEach(l=>{setTimeout(()=>{
+                const div=document.createElement('div');
+                div.className='terminal-line';
+                div.innerHTML=l.text||'&nbsp;';
+                body.appendChild(div);
+                gsap.to(div,{opacity:1,y:0,duration:.3,ease:'power2.out'});
+            },l.delay*1000)});
+        }
+        ScrollTrigger.create({trigger:'.terminal',start:'top 70%',once:true,onEnter:playTerminal});
+
+        /* ===== TABS ===== */
+        document.querySelectorAll('.tab-btn').forEach(btn=>{
+            btn.addEventListener('click',()=>{
+                document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+                btn.classList.add('active');
+                const panel=document.querySelector(`.tab-panel[data-panel="${btn.dataset.tab}"]`);
+                panel.classList.add('active');
+                gsap.from(panel.querySelector('.tab-visual'),{opacity:0,scale:.92,duration:.5,ease:'back.out(1.5)'});
+                gsap.from(panel.querySelector('.tab-content'),{opacity:0,x:25,duration:.45,delay:.08,ease:'power3.out'});
+            });
+        });
+
+        /* ===== ECOSYSTEM: Radial burst ===== */
+        gsap.set('.eco-item',{opacity:0,y:20});
+        const ecoObs=new IntersectionObserver(entries=>{
+            entries.forEach(e=>{
+                if(!e.isIntersecting)return;
+                gsap.to('.eco-item',{opacity:1,y:0,duration:.4,stagger:.05,ease:'power2.out'});
+                ecoObs.unobserve(e.target);
+            });
+        },{threshold:.1});
+        const ecoGrid=document.querySelector('.eco-grid');
+        if(ecoGrid)ecoObs.observe(ecoGrid);
+
+        /* ===== CTA: UNIQUE — Dramatic scale + blur ===== */
+        gsap.from('.cta h2',{opacity:0,scale:.85,filter:'blur(8px)',duration:1.2,ease:'power3.out',scrollTrigger:{trigger:'.cta',start:'top 75%'}});
+        gsap.from('.cta p',{opacity:0,y:30,duration:.8,ease:'power3.out',scrollTrigger:{trigger:'.cta',start:'75% 75%'},delay:.2});
+        gsap.from('.cta .btn',{opacity:0,scale:.85,duration:.7,ease:'back.out(2)',scrollTrigger:{trigger:'.cta',start:'75% 70%'},delay:.35});
+
+        /* CTA button glow pulse */
+        const ctaBtn=document.querySelector('.cta .btn');
+        if(ctaBtn) gsap.to(ctaBtn,{boxShadow:'0 0 30px rgba(0,102,255,.25),0 8px 28px rgba(0,0,0,.18)',repeat:-1,yoyo:true,duration:2.5,ease:'sine.inOut'});
+    }
+
+    /* ========== CURSOR ========== */
+    const dot=document.querySelector('.cursor-dot'),ring=document.querySelector('.cursor-ring');
+    let mx=0,my=0,rx=0,ry=0;
+    document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;gsap.to(dot,{x:mx-3,y:my-3,duration:.06,ease:'power2.out'})});
+    (function aR(){rx+=(mx-rx)*.12;ry+=(my-ry)*.12;ring.style.transform=`translate(${rx-18}px,${ry-18}px)`;requestAnimationFrame(aR)})();
+
+    const hoverEls='a,button,[data-magnetic],.bento-card,.showcase-card,.eco-item,.arch-node,.tab-btn,.nav-links a';
+    document.querySelectorAll(hoverEls).forEach(el=>{
+        el.addEventListener('mouseenter',()=>ring.classList.add('hover'));
+        el.addEventListener('mouseleave',()=>ring.classList.remove('hover'));
+    });
+    document.addEventListener('mousedown',()=>{ring.classList.add('clicking');dot.classList.add('clicking')});
+    document.addEventListener('mouseup',()=>{ring.classList.remove('clicking');dot.classList.remove('clicking')});
+
+    /* ========== MAGNETIC BUTTONS ========== */
+    document.querySelectorAll('[data-magnetic]').forEach(btn=>{
+        btn.addEventListener('mousemove',e=>{const r=btn.getBoundingClientRect();gsap.to(btn,{x:(e.clientX-r.left-r.width/2)*.3,y:(e.clientY-r.top-r.height/2)*.3,duration:.4,ease:'power2.out'})});
+        btn.addEventListener('mouseleave',()=>{gsap.to(btn,{x:0,y:0,duration:.7,ease:'elastic.out(1,.4)'})});
+    });
+
+    /* ========== NAV SCROLL ========== */
+    window.addEventListener('scroll',()=>document.querySelector('nav').classList.toggle('scrolled',scrollY>50));
+    document.querySelectorAll('a[href^="#"]').forEach(a=>{
+        a.addEventListener('click',e=>{e.preventDefault();const t=document.querySelector(a.getAttribute('href'));if(t)gsap.to(window,{scrollTo:{y:t,offsetY:60},duration:1.2,ease:'power3.inOut'})});
+    });
+
+    /* ========== PARALLAX ORBS ========== */
+    gsap.to('.hero-orb-1',{y:130,ease:'none',scrollTrigger:{trigger:'.hero',start:'top top',end:'bottom top',scrub:1}});
+    gsap.to('.hero-orb-2',{y:90,ease:'none',scrollTrigger:{trigger:'.hero',start:'top top',end:'bottom top',scrub:1}});
+    gsap.to('.hero-orb-3',{y:65,x:-45,ease:'none',scrollTrigger:{trigger:'.hero',start:'top top',end:'bottom top',scrub:1}});
+
+    /* ========== PARTICLES ========== */
+    const canvas=document.getElementById('particle-canvas'),ctx=canvas.getContext('2d');
+    let particles=[],lastP={x:0,y:0};
+    function resizeCanvas(){canvas.width=innerWidth;canvas.height=innerHeight}
+    resizeCanvas();addEventListener('resize',resizeCanvas);
+    class Particle{
+        constructor(x,y){
+            this.x=x;this.y=y;
+            this.vx=(Math.random()-.5)*1.8;this.vy=(Math.random()-.5)*1.8;
+            this.life=1;this.decay=.016+Math.random()*.014;
+            this.size=1.5+Math.random()*2.5;
+            this.hue=210+Math.random()*25;
+        }
+        update(){this.x+=this.vx;this.y+=this.vy;this.vy+=.01;this.life-=this.decay;this.size*=.988}
+        draw(){ctx.save();ctx.globalAlpha=this.life*.6;ctx.fillStyle=`hsla(${this.hue},75%,55%,${this.life})`;ctx.beginPath();ctx.arc(this.x,this.y,this.size,0,Math.PI*2);ctx.fill();ctx.restore()}
+    }
+    document.addEventListener('mousemove',e=>{
+        const dx=e.clientX-lastP.x,dy=e.clientY-lastP.y,speed=Math.sqrt(dx*dx+dy*dy);
+        const count=Math.min(Math.floor(speed/10),3);
+        for(let i=0;i<count;i++)particles.push(new Particle(e.clientX+(Math.random()-.5)*8,e.clientY+(Math.random()-.5)*8));
+        lastP.x=e.clientX;lastP.y=e.clientY;
+    });
+    (function aP(){ctx.clearRect(0,0,canvas.width,canvas.height);particles=particles.filter(p=>p.life>0);particles.forEach(p=>{p.update();p.draw()});if(particles.length>130)particles=particles.slice(-130);requestAnimationFrame(aP)})();
+
+    /* ========== CLICK RIPPLE — buttons only ========== */
+    document.querySelectorAll('.btn').forEach(btn=>{
+        btn.addEventListener('click',e=>{
+            const r=btn.getBoundingClientRect();
+            const ripple=document.createElement('span');
+            ripple.style.cssText=`position:absolute;width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.35);pointer-events:none;left:${e.clientX-r.left}px;top:${e.clientY-r.top}px;transform:translate(-50%,-50%) scale(0)`;
+            btn.appendChild(ripple);
+            gsap.to(ripple,{scale:9,opacity:0,duration:.6,ease:'power2.out',onComplete:()=>ripple.remove()});
+            gsap.fromTo(btn,{scale:.94},{scale:1,duration:.45,ease:'elastic.out(1,.4)'});
+        });
+    });
+
+    /* ========== BENTO/SHOWCASE TILT ========== */
+    document.querySelectorAll('.bento-card,.showcase-card').forEach(card=>{
+        card.addEventListener('mousemove',e=>{
+            const r=card.getBoundingClientRect();
+            const x=(e.clientX-r.left)/r.width-.5;
+            const y=(e.clientY-r.top)/r.height-.5;
+            gsap.to(card,{rotationY:x*8,rotationX:-y*8,transformPerspective:800,duration:.45,ease:'power2.out'});
+            const glow=card.querySelector('.card-glow');
+            if(glow)gsap.to(glow,{x:x*70,y:y*70,duration:.45,ease:'power2.out'});
+        });
+        card.addEventListener('mouseleave',()=>{
+            gsap.to(card,{rotationY:0,rotationX:0,duration:.6,ease:'elastic.out(1,.45)'});
+        });
+    });
+    </script>
+</body>
+</html>

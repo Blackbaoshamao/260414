@@ -1,78 +1,93 @@
 """General Settings page."""
 from __future__ import annotations
 
-from PyQt5.QtCore import pyqtSignal
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QMessageBox, QWidget, QVBoxLayout, QHBoxLayout,
+)
 from loguru import logger
-from siui.components.page import SiPage
-from siui.components.widgets import SiDenseHContainer, SiPushButton
-from siui.components.titled_widget_group import SiTitledWidgetGroup
-from siui.components.option_card import SiOptionCardLinear
-from siui.components.combobox.combobox import SiComboBox
+from qfluentwidgets import (
+    SettingCard, ComboBox, PushButton, PrimaryPushButton,
+    FluentIcon, StrongBodyLabel,
+)
 
 from ui_constants import _DATA_SOURCE_OPTIONS, DEFAULT_DATA_SOURCE, _DEFAULT_MESSAGE_FILTERS
 from ui_settings import _load_settings, _save_settings
-from ui import _make_back_button
+from fluent_page import FluentPage
 from maintenance import clear_software_cache, clear_software_data
+import ui_theme as theme
+from ui_theme import patch_setting_card_padding
 
 
-class GeneralSettingsPage(SiPage):
-    back_requested = pyqtSignal()
+class GeneralSettingsPage(FluentPage):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setPadding(64)
         self.setScrollMaximumWidth(800)
 
-        container = SiTitledWidgetGroup(self)
-        container.setSpacing(16)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(16)
 
-        container.addWidget(_make_back_button(self, self.back_requested))
+        # Data source section
+        source_label = StrongBodyLabel("数据源")
+        source_label.setStyleSheet(f"color: {theme.CLR_TEXT_PRI};")
+        layout.addWidget(source_label)
 
-        container.addTitle("数据源")
-        source_card = SiOptionCardLinear(self)
-        source_card.setTitle("弹幕来源", "选择直播数据获取方式")
-        source_card.load("ic_fluent_database_filled")
-        self._source_combo = SiComboBox(self)
-        self._source_combo.setFixedSize(200, 32)
+        source_card = SettingCard(FluentIcon.DOCUMENT, "弹幕来源", "选择直播数据获取方式")
+        self._source_combo = ComboBox()
+        self._source_combo.setFixedWidth(200)
         for text, value in _DATA_SOURCE_OPTIONS:
-            self._source_combo.addOption(text, value=value)
-        self._source_combo.menu().setShowIcon(False)
-        self._source_combo.menu().setIndex(0)
-        source_card.addWidget(self._source_combo)
-        container.addWidget(source_card)
+            self._source_combo.addItem(text, userData=value)
+        source_card.hBoxLayout.addWidget(self._source_combo, 0, Qt.AlignRight)
+        patch_setting_card_padding(source_card)
+        layout.addWidget(source_card)
 
-        container.addTitle("关于")
-        about_card = SiOptionCardLinear(self)
-        about_card.setTitle("Aiszr v0.5", "AI 数字人直播助手")
-        about_card.load("ic_fluent_info_filled")
-        container.addWidget(about_card)
+        # About section
+        about_label = StrongBodyLabel("关于")
+        about_label.setStyleSheet(f"color: {theme.CLR_TEXT_PRI};")
+        layout.addWidget(about_label)
 
-        container.addTitle("操作")
-        btn_area = SiDenseHContainer(self)
-        btn_area.setFixedHeight(36)
-        self._save_btn = SiPushButton(self)
-        self._save_btn.resize(100, 28)
-        self._save_btn.attachment().setText("保存设置")
+        about_card = SettingCard(FluentIcon.INFO, "Aiszr v0.55", "AI 数字人直播助手")
+        patch_setting_card_padding(about_card)
+        layout.addWidget(about_card)
+
+        # Actions section
+        actions_label = StrongBodyLabel("操作")
+        actions_label.setStyleSheet(f"color: {theme.CLR_TEXT_PRI};")
+        layout.addWidget(actions_label)
+
+        btn_row = QWidget()
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
+
+        self._save_btn = PrimaryPushButton("保存设置")
+        self._save_btn.setFixedWidth(100)
         self._save_btn.clicked.connect(self._on_save)
-        btn_area.addWidget(self._save_btn)
-        self._reset_btn = SiPushButton(self)
-        self._reset_btn.resize(100, 28)
-        self._reset_btn.attachment().setText("恢复默认")
-        self._reset_btn.clicked.connect(self._on_reset)
-        btn_area.addWidget(self._reset_btn)
-        self._clear_cache_btn = SiPushButton(self)
-        self._clear_cache_btn.resize(110, 28)
-        self._clear_cache_btn.attachment().setText("清除缓存")
-        self._clear_cache_btn.clicked.connect(self._on_clear_cache)
-        btn_area.addWidget(self._clear_cache_btn)
-        self._clear_data_btn = SiPushButton(self)
-        self._clear_data_btn.resize(130, 28)
-        self._clear_data_btn.attachment().setText("清除软件数据")
-        self._clear_data_btn.clicked.connect(self._on_clear_data)
-        btn_area.addWidget(self._clear_data_btn)
-        container.addWidget(btn_area)
+        btn_layout.addWidget(self._save_btn)
 
+        self._reset_btn = PushButton("恢复默认")
+        self._reset_btn.setFixedWidth(100)
+        self._reset_btn.clicked.connect(self._on_reset)
+        btn_layout.addWidget(self._reset_btn)
+
+        self._clear_cache_btn = PushButton("清除缓存")
+        self._clear_cache_btn.setFixedWidth(110)
+        self._clear_cache_btn.clicked.connect(self._on_clear_cache)
+        btn_layout.addWidget(self._clear_cache_btn)
+
+        self._clear_data_btn = PushButton("清除软件数据")
+        self._clear_data_btn.setFixedWidth(130)
+        self._clear_data_btn.clicked.connect(self._on_clear_data)
+        btn_layout.addWidget(self._clear_data_btn)
+
+        btn_layout.addStretch(1)
+        layout.addWidget(btn_row)
+
+        layout.addStretch(1)
         self.setAttachment(container)
 
     def _apply_theme_styles(self):
@@ -80,12 +95,12 @@ class GeneralSettingsPage(SiPage):
 
     def _on_save(self):
         data = _load_settings()
-        data["data_source"] = self._source_combo.menu().value() or DEFAULT_DATA_SOURCE
+        data["data_source"] = self._source_combo.currentData() or DEFAULT_DATA_SOURCE
         _save_settings(data)
         logger.info("Settings saved")
 
     def _on_reset(self):
-        self._source_combo.menu().setIndex(0)
+        self._source_combo.setCurrentIndex(0)
         data = _load_settings()
         data["data_source"] = DEFAULT_DATA_SOURCE
         data["message_filters"] = dict(_DEFAULT_MESSAGE_FILTERS)

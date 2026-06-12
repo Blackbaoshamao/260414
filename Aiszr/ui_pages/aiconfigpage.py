@@ -1,7 +1,7 @@
 """AIConfigPage — live copilot/control settings."""
 from __future__ import annotations
 
-from PyQt5.QtCore import pyqtSignal, QSize, Qt
+from PyQt5.QtCore import QSize, Qt, QTimer
 from PyQt5.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QComboBox,
@@ -10,19 +10,21 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 from loguru import logger
-from siui.components.combobox.combobox import SiComboBox
-from siui.components.option_card import SiOptionCardLinear
-from siui.components.page import SiPage
-from siui.components.titled_widget_group import SiTitledWidgetGroup
-from siui.components.widgets import SiDenseHContainer, SiLineEdit, SiPushButton, SiSvgLabel
-from siui.core import SiGlobal
+from fluent_page import FluentPage
+from qfluentwidgets import (
+    SettingCard, SettingCardGroup, PushButton, PrimaryPushButton,
+    ComboBox, LineEdit as FLineEdit, FluentIcon, IconWidget,
+)
 
 import ui_theme as theme
+from ui_theme import patch_setting_card_padding
 from live_control_config import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -39,6 +41,45 @@ from ui_theme import (
     _build_text_area_stylesheet,
     _install_secret_reveal_action,
 )
+
+
+class _AutoGrowTextEdit(QTextEdit):
+    """QTextEdit that auto-grows/shrinks to fit its content, no scrollbar."""
+
+    def __init__(self, parent=None, *, min_h: int = 60):
+        super().__init__(parent)
+        self._min_h = min_h
+        self._last_h = 0
+        self._resize_pending = False
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.setMinimumHeight(min_h)
+        self.document().contentsChanged.connect(self._schedule_recalc)
+
+    def _schedule_recalc(self):
+        if not self._resize_pending:
+            self._resize_pending = True
+            QTimer.singleShot(0, self._do_resize)
+
+    def _do_resize(self):
+        self._resize_pending = False
+        w = self.viewport().width()
+        if w < 10:
+            return
+        doc = self.document()
+        old_tw = doc.textWidth()
+        doc.setTextWidth(w)
+        h = int(doc.size().height()) + 16
+        doc.setTextWidth(old_tw)
+        h = max(self._min_h, h)
+        if h != self._last_h:
+            self._last_h = h
+            self.setFixedHeight(h)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._schedule_recalc()
 
 
 _MODEL_OPTIONS = (DEFAULT_MODEL, "deepseek-reasoner")
@@ -93,8 +134,7 @@ def _template_icon(name: str, color: str) -> QIcon:
     return QIcon(pix)
 
 
-class AIConfigPage(SiPage):
-    back_requested = pyqtSignal()
+class AIConfigPage(FluentPage):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -109,27 +149,22 @@ class AIConfigPage(SiPage):
 
         self._init_legacy_persona_compat()
 
-        container = SiTitledWidgetGroup(self)
-        container.setSpacing(theme.SPACING_MD)
+        container = QWidget(self)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 0, 8, 0)
+        container_layout.setSpacing(8)
 
-        top_row = QWidget(self)
-        top_layout = QHBoxLayout(top_row)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(theme.SPACING_SM)
-        from ui_components import MacButton
+        _title = QLabel("AI 助播", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
 
-        self._back_btn = MacButton("返回", variant="secondary", parent=self)
-        self._back_btn.setFixedSize(80, 30)
-        self._back_btn.clicked.connect(self.back_requested.emit)
-        top_layout.addWidget(self._back_btn)
-        top_layout.addStretch(1)
-        container.addWidget(top_row)
-
-        self._build_model_section(container)
-        self._build_template_section(container)
-        self._build_control_section(container)
-        self._build_action_section(container)
-
+        self._settings_group = SettingCardGroup("", self)
+        self._settings_group.layout().setContentsMargins(0, 0, 8, 0)
+        self._build_model_section(self._settings_group)
+        self._build_template_section(self._settings_group)
+        self._build_control_section(self._settings_group)
+        self._build_action_section(self._settings_group)
+        container_layout.addWidget(self._settings_group)
         self.setAttachment(container)
         self._connect_signals()
         self._apply_theme_styles()
@@ -144,7 +179,7 @@ class AIConfigPage(SiPage):
         self._legacy_persona_container = QWidget(self)
         self._legacy_persona_container.hide()
 
-        self._name_input = SiLineEdit(self._legacy_persona_container)
+        self._name_input = FLineEdit(self._legacy_persona_container)
         self._role_edit = QTextEdit(self._legacy_persona_container)
         self._strategy_edit = QTextEdit(self._legacy_persona_container)
         self._scene_edit = QTextEdit(self._legacy_persona_container)
@@ -161,45 +196,44 @@ class AIConfigPage(SiPage):
         self._scheduled_random_space_switch = SiSwitch(self._legacy_persona_container)
         self._scheduled_voice_switch = SiSwitch(self._legacy_persona_container)
 
-    def _build_model_section(self, container: SiTitledWidgetGroup):
-        container.addTitle("模型配置")
+    def _build_model_section(self, container: SettingCardGroup):
+        _title = QLabel("模型配置", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container.vBoxLayout.addWidget(_title)
 
-        api_card = SiOptionCardLinear(self)
-        api_card.setTitle("API Key", "DeepSeek API 密钥")
-        api_card.load("ic_fluent_key_filled")
-        self._api_key_input = SiLineEdit(self)
+        api_card = SettingCard(FluentIcon.PEOPLE, "API Key", "DeepSeek API 密钥", parent=self)
+        self._api_key_input = FLineEdit(self)
         self._api_key_input.setFixedSize(300, 32)
-        _install_secret_reveal_action(self._api_key_input.lineEdit())
-        api_card.addWidget(self._api_key_input)
-        container.addWidget(api_card)
+        self._api_key_input.setFont(theme.FONT_BODY)
+        _install_secret_reveal_action(self._api_key_input)
+        api_card.hBoxLayout.addWidget(self._api_key_input, 0, Qt.AlignRight)
+        patch_setting_card_padding(api_card)
+        container.addSettingCard(api_card)
 
-        url_card = SiOptionCardLinear(self)
-        url_card.setTitle("Base URL", "API 接口地址")
-        url_card.load("ic_fluent_link_filled")
-        self._base_url_input = SiLineEdit(self)
+        url_card = SettingCard(FluentIcon.LINK, "Base URL", "API 接口地址", parent=self)
+        self._base_url_input = FLineEdit(self)
         self._base_url_input.setFixedSize(300, 32)
-        self._base_url_input.lineEdit().setText(DEFAULT_BASE_URL)
-        url_card.addWidget(self._base_url_input)
-        container.addWidget(url_card)
+        self._base_url_input.setText(DEFAULT_BASE_URL)
+        url_card.hBoxLayout.addWidget(self._base_url_input, 0, Qt.AlignRight)
+        patch_setting_card_padding(url_card)
+        container.addSettingCard(url_card)
 
-        model_card = SiOptionCardLinear(self)
-        model_card.setTitle("模型", "选择 DeepSeek 模型")
-        model_card.load("ic_fluent_brain_circuit_filled")
-        self._model_combo = SiComboBox(self)
+        model_card = SettingCard(FluentIcon.ROBOT, "模型", "选择 DeepSeek 模型", parent=self)
+        self._model_combo = ComboBox(self)
         self._model_combo.setFixedSize(200, 32)
         for model in _MODEL_OPTIONS:
-            self._model_combo.addOption(model, value=model)
-        self._model_combo.menu().setShowIcon(False)
-        self._select_si_combo_value(self._model_combo, DEFAULT_MODEL)
-        model_card.addWidget(self._model_combo)
-        container.addWidget(model_card)
+            self._model_combo.addItem(model, userData=model)
+        self._select_combo_value(self._model_combo, DEFAULT_MODEL)
+        model_card.hBoxLayout.addWidget(self._model_combo, 0, Qt.AlignRight)
+        patch_setting_card_padding(model_card)
+        container.addSettingCard(model_card)
 
-    def _build_template_section(self, container: SiTitledWidgetGroup):
-        container.addTitle("AI 助播设定")
+    def _build_template_section(self, container: SettingCardGroup):
+        _title = QLabel("AI 助播设定", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container.vBoxLayout.addWidget(_title)
 
-        template_card = SiOptionCardLinear(self)
-        template_card.setTitle("模板套装", "按不同直播商品或场次切换助播设定")
-        template_card.load("ic_fluent_apps_list_filled")
+        template_card = SettingCard(FluentIcon.DOCUMENT, "模板套装", "按不同直播商品或场次切换助播设定", parent=self)
 
         template_row = QWidget(self)
         template_row.setFixedSize(386, 34)
@@ -244,123 +278,120 @@ class AIConfigPage(SiPage):
         self._save_template_btn.setIconSize(QSize(14, 14))
         row_layout.addWidget(self._save_template_btn)
 
-        template_card.addWidget(template_row)
-        container.addWidget(template_card)
+        template_card.hBoxLayout.addWidget(template_row, 0, Qt.AlignRight)
+        patch_setting_card_padding(template_card)
+        container.addSettingCard(template_card)
 
         for field_name, label, icon_name, placeholder, height in _TEMPLATE_FIELDS:
             self._add_template_text_block(container, field_name, label, icon_name, placeholder, height)
 
-    def _build_control_section(self, container: SiTitledWidgetGroup):
-        container.addTitle("回复控制")
+    def _build_control_section(self, container: SettingCardGroup):
+        _title = QLabel("回复控制", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container.vBoxLayout.addWidget(_title)
 
-        reply_card = SiOptionCardLinear(self)
-        reply_card.setTitle("自动回复", "开启后 AI 会按场控设定生成回复")
-        reply_card.load("ic_fluent_chat_filled")
+        reply_card = SettingCard(FluentIcon.MESSAGE, "自动回复", "开启后 AI 会按场控设定生成回复", parent=self)
         self._auto_reply_switch = SiSwitch(self)
-        reply_card.addWidget(self._auto_reply_switch)
-        container.addWidget(reply_card)
+        reply_card.hBoxLayout.addWidget(self._auto_reply_switch, 0, Qt.AlignRight)
+        patch_setting_card_padding(reply_card)
+        container.addSettingCard(reply_card)
 
-        char_limit_card = SiOptionCardLinear(self)
-        char_limit_card.setTitle("回复字数上限", "限制单条 AI 回复长度")
-        char_limit_card.load("ic_fluent_text_number_format_filled")
+        char_limit_card = SettingCard(FluentIcon.FONT_SIZE, "回复字数上限", "限制单条 AI 回复长度", parent=self)
         self._reply_char_limit_spin = QSpinBox(self)
         self._reply_char_limit_spin.setRange(20, 500)
         self._reply_char_limit_spin.setSuffix(" 字")
         self._reply_char_limit_spin.setFixedSize(100, 32)
-        char_limit_card.addWidget(self._reply_char_limit_spin)
-        container.addWidget(char_limit_card)
+        char_limit_card.hBoxLayout.addWidget(self._reply_char_limit_spin, 0, Qt.AlignRight)
+        patch_setting_card_padding(char_limit_card)
+        container.addSettingCard(char_limit_card)
 
-        user_cooldown_card = SiOptionCardLinear(self)
-        user_cooldown_card.setTitle("单用户冷却", "同一观众两次 AI 回复的最小间隔")
-        user_cooldown_card.load("ic_fluent_person_clock_filled")
+        user_cooldown_card = SettingCard(FluentIcon.CALENDAR, "单用户冷却", "同一观众两次 AI 回复的最小间隔", parent=self)
         self._user_cooldown_spin = QSpinBox(self)
         self._user_cooldown_spin.setRange(0, 36000)
         self._user_cooldown_spin.setSuffix(" 秒")
         self._user_cooldown_spin.setFixedSize(100, 32)
-        user_cooldown_card.addWidget(self._user_cooldown_spin)
-        container.addWidget(user_cooldown_card)
+        user_cooldown_card.hBoxLayout.addWidget(self._user_cooldown_spin, 0, Qt.AlignRight)
+        patch_setting_card_padding(user_cooldown_card)
+        container.addSettingCard(user_cooldown_card)
 
-        interval_card = SiOptionCardLinear(self)
-        interval_card.setTitle("全局回复冷却", "两次自动回复的全局最小间隔")
-        interval_card.load("ic_fluent_clock_filled")
+        interval_card = SettingCard(FluentIcon.CALENDAR, "全局回复冷却", "两次自动回复的全局最小间隔", parent=self)
         self._interval_spin = QSpinBox(self)
         self._interval_spin.setRange(0, 36000)
         self._interval_spin.setSuffix(" 秒")
         self._interval_spin.setFixedSize(100, 32)
         self._global_cooldown_spin = self._interval_spin
-        interval_card.addWidget(self._interval_spin)
-        container.addWidget(interval_card)
+        interval_card.hBoxLayout.addWidget(self._interval_spin, 0, Qt.AlignRight)
+        patch_setting_card_padding(interval_card)
+        container.addSettingCard(interval_card)
 
-        tone_card = SiOptionCardLinear(self)
-        tone_card.setTitle("语气风格", "控制助播回复的表达倾向")
-        tone_card.load("ic_fluent_comment_filled")
+        tone_card = SettingCard(FluentIcon.MUSIC, "语气风格", "控制助播回复的表达倾向", parent=self)
         self._tone_style_combo = QComboBox(self)
         self._tone_style_combo.setFixedSize(150, 32)
         for value, label in TONE_STYLE_LABELS.items():
             self._tone_style_combo.addItem(label, value)
-        tone_card.addWidget(self._tone_style_combo)
-        container.addWidget(tone_card)
+        tone_card.hBoxLayout.addWidget(self._tone_style_combo, 0, Qt.AlignRight)
+        patch_setting_card_padding(tone_card)
+        container.addSettingCard(tone_card)
 
-        mention_card = SiOptionCardLinear(self)
-        mention_card.setTitle("@ 提问观众", "发送回复时附带观众昵称")
-        mention_card.load("ic_fluent_mention_filled")
+        mention_card = SettingCard(FluentIcon.PEOPLE, "@ 提问观众", "发送回复时附带观众昵称", parent=self)
         self._mention_user_switch = SiSwitch(self)
-        mention_card.addWidget(self._mention_user_switch)
-        container.addWidget(mention_card)
+        mention_card.hBoxLayout.addWidget(self._mention_user_switch, 0, Qt.AlignRight)
+        patch_setting_card_padding(mention_card)
+        container.addSettingCard(mention_card)
 
-        voice_card = SiOptionCardLinear(self)
-        voice_card.setTitle("语音播报", "生成回复后交给数字人语音播报")
-        voice_card.load("ic_fluent_speaker_2_filled")
+        voice_card = SettingCard(FluentIcon.VOLUME, "语音播报", "生成回复后交给数字人语音播报", parent=self)
         self._voice_reply_switch = SiSwitch(self)
-        voice_card.addWidget(self._voice_reply_switch)
-        container.addWidget(voice_card)
+        voice_card.hBoxLayout.addWidget(self._voice_reply_switch, 0, Qt.AlignRight)
+        patch_setting_card_padding(voice_card)
+        container.addSettingCard(voice_card)
 
-    def _build_action_section(self, container: SiTitledWidgetGroup):
-        container.addTitle("操作")
-        btn_area = SiDenseHContainer(self)
+    def _build_action_section(self, container: SettingCardGroup):
+        _title = QLabel("操作", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container.vBoxLayout.addWidget(_title)
+        btn_area = QWidget(self)
         btn_area.setFixedHeight(36)
+        btn_layout = QHBoxLayout(btn_area)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(theme.SPACING_SM)
 
-        self._save_btn = SiPushButton(self)
-        self._save_btn.resize(110, 28)
-        self._save_btn.attachment().setText("保存设置")
-        btn_area.addWidget(self._save_btn)
+        self._save_btn = PrimaryPushButton("保存设置", self)
+        self._save_btn.setFixedSize(110, 32)
+        btn_layout.addWidget(self._save_btn)
 
-        self._reset_btn = SiPushButton(self)
-        self._reset_btn.resize(100, 28)
-        self._reset_btn.attachment().setText("恢复默认")
-        btn_area.addWidget(self._reset_btn)
+        self._reset_btn = PushButton("恢复默认", self)
+        self._reset_btn.setFixedSize(100, 32)
+        btn_layout.addWidget(self._reset_btn)
 
-        container.addWidget(btn_area)
+        btn_layout.addStretch()
+        container.vBoxLayout.addWidget(btn_area)
 
     def _add_template_text_block(
         self,
-        container: SiTitledWidgetGroup,
+        container: SettingCardGroup,
         field_name: str,
         label: str,
         icon_name: str,
         placeholder: str,
         height: int,
     ):
-        row = SiDenseHContainer(self)
+        row = QWidget(self)
         row.setFixedHeight(24)
-
-        ico = SiSvgLabel(self)
-        ico.load(SiGlobal.siui.iconpack.get(icon_name))
-        ico.setSvgSize(16, 16)
-        ico.setFixedSize(16, 16)
-        row.addWidget(ico)
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
 
         lbl = QLabel(label)
-        row.addWidget(lbl)
+        row_layout.addWidget(lbl)
+        row_layout.addStretch()
         self._template_field_labels.append(lbl)
-        container.addWidget(row)
+        container.vBoxLayout.addWidget(row)
 
-        edit = QTextEdit(self)
-        edit.setFixedHeight(height)
+        edit = _AutoGrowTextEdit(self, min_h=height)
         edit.setPlaceholderText(placeholder)
         self._template_edits[field_name] = edit
         setattr(self, f"_{field_name}_edit", edit)
-        container.addWidget(edit)
+        container.vBoxLayout.addWidget(edit)
 
     def _connect_signals(self):
         self._save_btn.clicked.connect(self._auto_save)
@@ -384,9 +415,9 @@ class AIConfigPage(SiPage):
         self._scheduled_order_combo.currentIndexChanged.connect(lambda _index: self._auto_save())
         self._scheduled_random_space_switch.toggled.connect(lambda _checked: self._auto_save())
         self._scheduled_voice_switch.toggled.connect(lambda _checked: self._auto_save())
-        self._api_key_input.lineEdit().editingFinished.connect(self._auto_save)
-        self._base_url_input.lineEdit().editingFinished.connect(self._auto_save)
-        self._model_combo.valueChanged.connect(lambda _value: self._auto_save())
+        self._api_key_input.editingFinished.connect(self._auto_save)
+        self._base_url_input.editingFinished.connect(self._auto_save)
+        self._model_combo.currentIndexChanged.connect(lambda _index: self._auto_save())
 
     # ------------------------------------------------------------------
     # Theme
@@ -401,10 +432,10 @@ class AIConfigPage(SiPage):
             include_combo=True,
         )
 
-        self._api_key_input.lineEdit().setStyleSheet(line_edit_ss)
-        _install_secret_reveal_action(self._api_key_input.lineEdit())
-        self._base_url_input.lineEdit().setStyleSheet(line_edit_ss)
-        self._name_input.lineEdit().setStyleSheet(line_edit_ss)
+        self._api_key_input.setStyleSheet(line_edit_ss)
+        _install_secret_reveal_action(self._api_key_input)
+        self._base_url_input.setStyleSheet(line_edit_ss)
+        self._name_input.setStyleSheet(line_edit_ss)
 
         for spin in (
             self._interval_spin,
@@ -440,7 +471,7 @@ class AIConfigPage(SiPage):
         for lbl in self._persona_labels + self._template_field_labels:
             lbl.setStyleSheet("")
 
-        self._back_btn.apply_theme_styles()
+        pass
 
     def _template_icon_button_stylesheet(self, destructive: bool = False) -> str:
         hover = theme._mix_hex_colors(
@@ -641,9 +672,9 @@ class AIConfigPage(SiPage):
 
         self._suspend_auto_save = True
         try:
-            self._api_key_input.lineEdit().setText(live_settings.api_key)
-            self._base_url_input.lineEdit().setText(live_settings.base_url or DEFAULT_BASE_URL)
-            self._select_si_combo_value(self._model_combo, live_settings.model or DEFAULT_MODEL)
+            self._api_key_input.setText(live_settings.api_key)
+            self._base_url_input.setText(live_settings.base_url or DEFAULT_BASE_URL)
+            self._select_combo_value(self._model_combo, live_settings.model or DEFAULT_MODEL)
             self._auto_reply_switch.setChecked(live_settings.auto_reply)
             self._reply_char_limit_spin.setValue(live_settings.reply_char_limit)
             self._user_cooldown_spin.setValue(live_settings.user_cooldown_sec)
@@ -673,8 +704,8 @@ class AIConfigPage(SiPage):
             templates=dict(self._live_control_settings.templates),
             active_template=active,
             auto_reply=self._auto_reply_switch.isChecked(),
-            api_key=self._api_key_input.lineEdit().text(),
-            base_url=self._base_url_input.lineEdit().text().strip() or DEFAULT_BASE_URL,
+            api_key=self._api_key_input.text(),
+            base_url=self._base_url_input.text().strip() or DEFAULT_BASE_URL,
             model=self._current_model(),
             reply_char_limit=self._reply_char_limit_spin.value(),
             user_cooldown_sec=self._user_cooldown_spin.value(),
@@ -764,20 +795,17 @@ class AIConfigPage(SiPage):
     # Small widget helpers
     # ------------------------------------------------------------------
 
-    def _select_si_combo_value(self, combo: SiComboBox, target: str):
+    def _select_combo_value(self, combo: ComboBox, target: str):
         target = str(target or DEFAULT_MODEL)
-        try:
-            for idx, option in enumerate(combo.menu().options()):
-                if option.value() == target or option.text() == target:
-                    combo.menu().setIndex(idx)
-                    return
-            combo.menu().setIndex(0)
-        except Exception:
-            logger.debug("Failed to select SiComboBox value: {}", target)
+        idx = combo.findText(target)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            combo.setCurrentIndex(0)
 
     def _current_model(self) -> str:
         try:
-            value = self._model_combo.menu().value()
+            value = self._model_combo.currentData()
             if value:
                 return str(value)
         except Exception:

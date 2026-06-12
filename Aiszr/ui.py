@@ -20,7 +20,7 @@ import wave
 
 from PyQt5.QtCore import (
     QObject, pyqtSignal, pyqtSlot, pyqtProperty, QThread, QTimer, QRect, QSize, Qt,
-    QPropertyAnimation, QEasingCurve, QPointF,
+    QPropertyAnimation, QEasingCurve, QPoint, QPointF,
 )
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QTextCursor, QBrush, QIcon, QPixmap
 from PyQt5.QtWidgets import (
@@ -57,31 +57,17 @@ from voice_models import (
     VoiceSettings,
 )
 
-from siui.core import SiColor, SiGlobal, GlobalFont, Si
-from siui.gui import SiFont
-
-from siui.templates.application.application import SiliconApplication
-
-from siui.components.page import SiPage
-
-from siui.components.widgets import (
-    SiDenseHContainer, SiDenseVContainer,
-    SiLabel, SiLineEdit, SiPushButton, SiSwitch as SiBaseSwitch, SiSvgLabel,
+from qfluentwidgets import (
+    FluentWindow, FluentIcon, NavigationItemPosition,
+    PushButton, PrimaryPushButton, ComboBox, LineEdit as FLineEdit,
+    Slider as FSlider, Dialog, SettingCard, SettingCardGroup,
+    SwitchButton, IconWidget, InfoBar,
 )
-from siui.components.titled_widget_group import SiTitledWidgetGroup
 
-from siui.components.option_card import SiOptionCardLinear
-
-from siui.components.combobox.combobox import SiComboBox
-
-from siui.components.slider import SiSliderH
-
-from siui.templates.application.components.dialog.modal import SiModalDialog
-
-from ui_theme import _iOSToggle, SiSwitch, _THEMES, _THEME_MAP, _THEME_LABELS, _DEFAULT_THEME, _current_theme
+from ui_theme import _iOSToggle, _THEMES, _THEME_MAP, _THEME_LABELS, _DEFAULT_THEME, _current_theme
 from ui_theme import _APP_ICON_NAME, _THEME_SATURATION_BOOST, _SATURATION_BOOST_KEYS
 from ui_theme import _boost_hex_saturation, _tune_theme, _mix_hex_colors, _hex_with_alpha
-from ui_theme import _placeholder_h, _update_siui_color_group, _apply_qt_global_theme
+from ui_theme import _apply_qt_global_theme
 from ui_theme import _build_input_field_stylesheet, _build_text_area_stylesheet
 from ui_theme import _secret_reveal_icon, _install_secret_reveal_action
 from ui_theme import _tune_font_quality, FONT_MONO, FONT_MONO_SMALL, FONT_UI, FONT_TITLE
@@ -97,6 +83,43 @@ from ui_constants import _normalize_message_filters
 from ui_settings import _load_settings, _save_settings, SETTINGS_FILE
 
 import ui_theme
+
+
+def _configure_smooth_text_browser_scroll(browser) -> None:
+    sb = browser.verticalScrollBar()
+    sb.setSingleStep(18)
+    sb.setPageStep(max(48, browser.height() - 48))
+    anim = QPropertyAnimation(sb, b"value", browser)
+    anim.setDuration(135)
+    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    browser._smooth_scroll_anim = anim
+
+
+def _smooth_text_browser_wheel_event(browser, event) -> bool:
+    sb = browser.verticalScrollBar()
+    pixel_delta = event.pixelDelta().y()
+    angle_delta = event.angleDelta().y()
+    if pixel_delta:
+        delta = float(pixel_delta)
+    elif angle_delta:
+        delta = float(angle_delta) / 120.0 * 54.0
+    else:
+        return False
+
+    target = int(round(sb.value() - delta))
+    target = max(sb.minimum(), min(sb.maximum(), target))
+    anim = getattr(browser, "_smooth_scroll_anim", None)
+    if anim is None:
+        sb.setValue(target)
+    else:
+        anim.stop()
+        anim.setStartValue(sb.value())
+        anim.setEndValue(target)
+        anim.start()
+    event.accept()
+    return True
+
+
 def apply_theme(theme_name: str):
     """Wrapper: update ui_theme module + this module's globals."""
     ui_theme.apply_theme(theme_name)
@@ -119,17 +142,6 @@ def apply_theme(theme_name: str):
 # ---------------------------------------------------------------------------
 
 
-
-def _make_back_button(parent, back_signal) -> SiDenseHContainer:
-    """返回一个带 Mac 风格"返回"按钮的容器。"""
-    from ui_components import MacButton
-    area = SiDenseHContainer(parent)
-    area.setFixedHeight(32)
-    btn = MacButton("返回", variant="secondary", parent=parent)
-    btn.setFixedSize(80, 28)
-    btn.clicked.connect(back_signal.emit)
-    area.addWidget(btn)
-    return area
 
 class FilterCheckBox(QCheckBox):
     _INDICATOR_SIZE = 16
@@ -250,6 +262,7 @@ class DanmakuDisplay(QTextBrowser):
         self.setReadOnly(True)
         self.setOpenLinks(False)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        _configure_smooth_text_browser_scroll(self)
         self._apply_theme_styles()
         self._auto_scroll = True
         self._pending_html: list = []
@@ -299,10 +312,16 @@ class DanmakuDisplay(QTextBrowser):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.verticalScrollBar().setPageStep(max(48, self.height() - 48))
         self._scroll_btn.move(
             self.width() - self._scroll_btn.sizeHint().width() - 12,
             self.height() - 36,
         )
+
+    def wheelEvent(self, event):
+        if _smooth_text_browser_wheel_event(self, event):
+            return
+        super().wheelEvent(event)
 
     def _on_scroll(self, value):
         sb = self.verticalScrollBar()
@@ -430,6 +449,7 @@ class AIReplyDisplay(QTextBrowser):
         self.setFont(FONT_MONO)
         self.setReadOnly(True)
         self.setOpenLinks(False)
+        _configure_smooth_text_browser_scroll(self)
         self._apply_theme_styles()
         self._auto_scroll = True
         self.verticalScrollBar().valueChanged.connect(
@@ -462,6 +482,15 @@ class AIReplyDisplay(QTextBrowser):
         self.append(bubble)
         if self._auto_scroll:
             self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.verticalScrollBar().setPageStep(max(48, self.height() - 48))
+
+    def wheelEvent(self, event):
+        if _smooth_text_browser_wheel_event(self, event):
+            return
+        super().wheelEvent(event)
 
 
 # ---------------------------------------------------------------------------
@@ -1727,138 +1756,6 @@ class _ChecklistItem(QWidget):
 
 
 
-class _VideoThumbCard(QFrame):
-    clicked = pyqtSignal(int)
-    remove_requested = pyqtSignal(int)
-
-    # Border width is constant (2px) across selected/unselected — only the
-    # color changes. Thumb label is sized to fit *inside* the 2px border +
-    # 2px content margin so the border always renders cleanly without being
-    # clipped or overlapped, which was the "歪" effect.
-    _BORDER_W = 2
-    _CONTENT_MARGIN = 2
-    _INNER_INSET = _BORDER_W + _CONTENT_MARGIN  # 4px on each side
-
-    def __init__(
-        self,
-        index: int,
-        video_path: str,
-        pixmap: QPixmap | None,
-        parent=None,
-        status_text: str = "",
-    ):
-        super().__init__(parent)
-        self._index = index
-        self.setFixedSize(_CARD_W, _CARD_H)
-        self.setFrameShape(QFrame.NoFrame)
-        self.setCursor(Qt.PointingHandCursor)
-        self._selected = False
-        self._pixmap = pixmap
-        self._apply_border_style(CLR_BORDER)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(self._CONTENT_MARGIN, self._CONTENT_MARGIN,
-                                  self._CONTENT_MARGIN, self._CONTENT_MARGIN)
-        layout.setSpacing(0)
-
-        inner_w = _CARD_W - 2 * self._INNER_INSET
-        status_h = 24
-        inner_h = _CARD_H - 2 * self._INNER_INSET - status_h
-        self._thumb_label = QLabel(self)
-        self._thumb_label.setFixedSize(inner_w, inner_h)
-        self._thumb_label.setAlignment(Qt.AlignCenter)
-        self._thumb_label.setStyleSheet(
-            f"border-radius: 9px; background-color: {CLR_INPUT_BG};"
-        )
-        if pixmap and not pixmap.isNull():
-            scaled = pixmap.scaled(
-                inner_w, inner_h,
-                Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation,
-            )
-            self._thumb_label.setPixmap(scaled)
-        else:
-            self._thumb_label.setText(os.path.basename(video_path)[:12])
-        layout.addWidget(self._thumb_label)
-        self._badge_label = QLabel(self)
-        self._badge_label.setAlignment(Qt.AlignCenter)
-        self._badge_label.setStyleSheet(
-            "QLabel {"
-            "background-color: transparent;"
-            f"color: {CLR_TEXT_SEC};"
-            "border: none;"
-            "font-size: 11px;"
-            "padding: 2px 0;"
-            "}"
-        )
-        self._badge_label.setFixedSize(inner_w, status_h)
-        self.set_status(status_text)
-        layout.addWidget(self._badge_label)
-
-    def _apply_border_style(self, color: str):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: {CLR_INPUT_BG};
-                border: {self._BORDER_W}px solid {color};
-                border-radius: 12px;
-            }}
-        """)
-
-    @property
-    def index(self):
-        return self._index
-
-    def set_status(self, text: str):
-        text = (text or "").strip()
-        self._badge_label.setText(text)
-
-    def set_selected(self, selected: bool):
-        self._selected = selected
-        # Only the color changes — width and layout stay identical, so the
-        # border is always centred and never partially hidden by the thumb.
-        self._apply_border_style(CLR_ACCENT if selected else CLR_BORDER)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self._index)
-        elif event.button() == Qt.RightButton:
-            self.remove_requested.emit(self._index)
-        super().mousePressEvent(event)
-
-
-class _AddCard(QFrame):
-    clicked = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(_CARD_W, _CARD_H)
-        self.setFrameShape(QFrame.NoFrame)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: {CLR_INPUT_BG};
-                border: 1px dashed {CLR_BORDER};
-                border-radius: 12px;
-            }}
-            QFrame:hover {{
-                border-color: {CLR_ACCENT};
-                background-color: {CLR_BG_ELEVATED};
-            }}
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignCenter)
-        plus_label = QLabel("+", self)
-        plus_label.setAlignment(Qt.AlignCenter)
-        plus_label.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 32pt; border: none; background: transparent;")
-        layout.addWidget(plus_label)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-
 class _BottomStatusBar(QWidget):
     """Persistent 32px-tall status bar pinned to the bottom of AiszrApp.
 
@@ -2070,18 +1967,18 @@ class _BottomStatusBar(QWidget):
 # AiszrApp — Main application window
 # ---------------------------------------------------------------------------
 
-class AiszrApp(SiliconApplication):
+class AiszrApp(FluentWindow):
     _BOTTOM_BAR_HEIGHT = 32
 
     def __init__(self, worker: CaptureWorker, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
+        self.setWindowTitle("Aiszr - AI 直播助手")
+        self._setup_title_bar_logo()
 
         self._worker = worker
         self.resize(1400, 900)
         self.setMinimumSize(1280, 900)
-        self.layerMain().setTitle("Aiszr")
         self._apply_app_icon()
-        self.setWindowTitle("Aiszr - AI 直播助手")
 
         # Persistent global bottom status bar. Created as a direct child of the
         # main window (alongside the modal/drawer/overlay layers) so it survives
@@ -2090,24 +1987,17 @@ class AiszrApp(SiliconApplication):
         self._bottom_bar.show()
 
     def resizeEvent(self, event):
-        # SiliconApplication.resizeEvent sizes group_main_interface and
-        # layer_main to the full window. We shrink them by _BOTTOM_BAR_HEIGHT
-        # when the bottom bar is visible so it doesn't overlap content.
         super().resizeEvent(event)
         self._relayout_bottom_bar()
 
     def _relayout_bottom_bar(self):
-        """Position bottom bar and adjust main layers based on bar visibility."""
+        """Position bottom bar below the main content area."""
+        if not hasattr(self, "_bottom_bar"):
+            return
         size = self.size()
         w, h = size.width(), size.height()
-        bar_visible = hasattr(self, "_bottom_bar") and self._bottom_bar.isVisible()
+        bar_visible = self._bottom_bar.isVisible()
         bar_h = self._BOTTOM_BAR_HEIGHT if bar_visible else 0
-        if hasattr(self, "group_main_interface"):
-            self.group_main_interface.resize(w, h - bar_h)
-        if hasattr(self, "layer_main"):
-            self.layer_main.resize(w, h - bar_h)
-        if hasattr(self, "layer_child_page"):
-            self.layer_child_page.resize(w, h - bar_h)
         if bar_visible:
             self._bottom_bar.setGeometry(0, h - bar_h, w, bar_h)
             self._bottom_bar.raise_()
@@ -2132,17 +2022,14 @@ class AiszrApp(SiliconApplication):
         self._home_page.set_live_page(self._live_page)
 
         self._ai_config_page = AIConfigPage(self)
-        self._ai_config_page.back_requested.connect(lambda: self._set_page(0))
         self._ai_config_page._app_ref = self
 
         self._scheduled_scripts_page = ScheduledScriptsPage(self)
-        self._scheduled_scripts_page.back_requested.connect(lambda: self._set_page(0))
         self._scheduled_scripts_page.settings_changed.connect(
             self._on_scheduled_scripts_settings_changed
         )
 
         self._voice_page = VoiceConfigPage(self)
-        self._voice_page.back_requested.connect(lambda: self._set_page(0))
         self._voice_page.api_settings_requested.connect(self._open_voice_api_dialog)
         self._voice_page.clone_dialog_requested.connect(self._open_voice_clone_dialog)
         self._voice_page.anchor_settings_requested.connect(self._open_anchor_settings_dialog)
@@ -2169,7 +2056,6 @@ class AiszrApp(SiliconApplication):
         self._copilot_settings_dialog.voice_settings_changed.connect(self._on_voice_settings_changed)
 
         self._obs_page = ObsActionPage(self)
-        self._obs_page.back_requested.connect(lambda: self._set_page(0))
         self._obs_page.obs_settings_changed.connect(self._on_obs_settings_changed)
         self._obs_page.obs_status_check_requested.connect(self._on_obs_status_check_requested)
 
@@ -2181,53 +2067,32 @@ class AiszrApp(SiliconApplication):
         self._digital_human_page = None
 
         self._settings_page = GeneralSettingsPage(self)
-        self._settings_page.back_requested.connect(lambda: self._set_page(0))
 
         self._keyword_reply_page = KeywordReplyPage(self)
-        self._keyword_reply_page.back_requested.connect(lambda: self._set_page(0))
 
-        # Sidebar pages:
-        # 0=home, 1=ai, 2=keyword, 3=scheduled scripts, 4=voice/stream, 5=obs, 6=settings.
-        # DigitalHumanPage is kept as a class for fallback/rollback but its UI
-        # now lives at the bottom of VoiceConfigPage.
-        self.layerMain().addPage(self._home_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_window_console_filled"),
-            hint="首页", side="top")
-        self.layerMain().addPage(self._ai_config_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_brain_circuit_filled"),
-            hint="AI 助播", side="top")
-        self.layerMain().addPage(self._keyword_reply_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_comment_filled"),
-            hint="关键词回复", side="top")
-        self.layerMain().addPage(self._scheduled_scripts_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_timer_filled"),
-            hint="场控话术", side="top")
-        self.layerMain().addPage(self._voice_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_mic_sparkle_filled"),
-            hint="AI 语音 / 推流", side="top")
-        self.layerMain().addPage(self._obs_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_tv_arrow_right_filled"),
-            hint="OBS 联动", side="top")
-        self.layerMain().addPage(self._settings_page,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_wrench_screwdriver_filled"),
-            hint="设置", side="bottom")
+        # Sidebar pages via FluentWindow addSubInterface()
+        self._page_map = {}  # widget -> nav index for bottom bar logic
+        pages = [
+            (self._home_page, FluentIcon.HOME, "首页"),
+            (self._ai_config_page, FluentIcon.ROBOT, "AI 助播"),
+            (self._keyword_reply_page, FluentIcon.MESSAGE, "关键词回复"),
+            (self._scheduled_scripts_page, FluentIcon.CALENDAR, "场控话术"),
+            (self._voice_page, FluentIcon.MUSIC, "AI 语音 / 推流"),
+            (self._obs_page, FluentIcon.APPLICATION, "OBS 联动"),
+        ]
+        for i, (page, icon, text) in enumerate(pages):
+            page.setObjectName(f"page_{i}")
+            self.addSubInterface(page, icon, text, position=NavigationItemPosition.TOP)
+            self._page_map[id(page)] = i
 
-        # Sidebar PageButton clicks bypass _set_page — they call
-        # stacked_container.setCurrentIndex directly, which SiliconUI's
-        # StackedContainerWithShowUpAnimation does NOT emit a signal for.
-        # Wrap setCurrentIndex to hook our visibility logic into every switch.
-        _stacked = self.layerMain().page_view.stacked_container
-        _orig_set_idx = _stacked.setCurrentIndex
-        def _wrapped_set_idx(index: int, *args, **kwargs):
-            if self._current_page_index() == int(index):
-                self._apply_bottom_bar_visibility(int(index))
-                return
-            _orig_set_idx(index, *args, **kwargs)
-            self._apply_bottom_bar_visibility(index)
-        _stacked.setCurrentIndex = _wrapped_set_idx
+        self._settings_page.setObjectName("page_settings")
+        self.addSubInterface(self._settings_page, FluentIcon.SETTING, "设置",
+                             position=NavigationItemPosition.BOTTOM)
+        self._page_map[id(self._settings_page)] = 6
 
-        self._set_page(0)
-        SiGlobal.siui.reloadAllWindowsStyleSheet()
+        # Connect navigation signal for bottom bar visibility
+        self.stackedWidget.setCurrentIndex(0)
+        self._apply_bottom_bar_visibility(0)
 
         worker.login_state.connect(self._on_login_state)
         worker.login_state.connect(self._home_page.update_login_state)
@@ -2299,9 +2164,9 @@ class AiszrApp(SiliconApplication):
         self._home_page.set_ai_assistant_voice_checked(live_settings.voice_reply_enabled)
         self._home_page.refresh_scheduled_card(live_settings)
         data_source = _normalize_data_source(settings.get("data_source"))
-        for idx, option in enumerate(self._settings_page._source_combo.menu().options()):
-            if option.value() == data_source or option.text() == data_source:
-                self._settings_page._source_combo.menu().setIndex(idx)
+        for idx in range(self._settings_page._source_combo.count()):
+            if self._settings_page._source_combo.itemData(idx) == data_source:
+                self._settings_page._source_combo.setCurrentIndex(idx)
                 break
         theme_name = settings.get("theme", _DEFAULT_THEME)
         if theme_name not in _THEME_MAP:
@@ -2576,20 +2441,16 @@ class AiszrApp(SiliconApplication):
 
     def _current_page_index(self) -> int:
         try:
-            return int(self.layerMain().page_view.stacked_container.currentIndex())
+            return self.stackedWidget.currentIndex()
         except Exception:
-            try:
-                return int(self.layerMain().page_view.page_navigator.currentIndex())
-            except Exception:
-                return -1
+            return -1
 
     def _set_page(self, index: int):
         index = int(index)
         if self._current_page_index() == index:
             self._apply_bottom_bar_visibility(index)
             return
-        self.layerMain().setPage(index)
-        self.layerMain().page_view.page_navigator.setCurrentIndex(index)
+        self.stackedWidget.setCurrentIndex(index)
         self._apply_bottom_bar_visibility(index)
 
     def _apply_bottom_bar_visibility(self, index: int):
@@ -2606,34 +2467,30 @@ class AiszrApp(SiliconApplication):
         self._relayout_bottom_bar()
 
     def _apply_app_icon(self):
-        icon_svg = os.path.join(os.path.dirname(__file__), "icon.svg")
         icon_png = os.path.join(os.path.dirname(__file__), "icon.png")
-        # Prefer icon.png: the on-disk icon.svg embeds a JPEG (mislabeled as PNG)
-        # which loses the alpha channel and renders transparent areas as black.
-        # Rebuild the SVG wrapper from the real PNG bytes at runtime.
+        icon_svg = os.path.join(os.path.dirname(__file__), "icon.svg")
         if os.path.exists(icon_png):
-            import base64
-            with open(icon_png, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode("ascii")
-            svg = (
-                '<svg xmlns="http://www.w3.org/2000/svg" '
-                'xmlns:xlink="http://www.w3.org/1999/xlink" '
-                'width="256" height="256" viewBox="0 0 256 256">'
-                f'<image width="256" height="256" '
-                f'xlink:href="data:image/png;base64,{b64}"/></svg>'
-            )
-            self.layerMain().app_icon.load(svg.encode("utf-8"))
             self.setWindowIcon(QIcon(icon_png))
         elif os.path.exists(icon_svg):
-            self.layerMain().app_icon.load(icon_svg)
-        else:
-            icon_color = SiGlobal.siui.colors["TEXT_THEME"]
-            self.layerMain().app_icon.load(
-                SiGlobal.siui.iconpack.get(
-                    _APP_ICON_NAME,
-                    color_code=icon_color,
-                )
-            )
+            self.setWindowIcon(QIcon(icon_svg))
+
+    def _setup_title_bar_logo(self):
+        """Replace the default title bar text with the Aiszr logo."""
+        from PyQt5.QtGui import QPixmap
+        title_bar = self.titleBar
+        if not title_bar:
+            return
+        # Hide the default title label
+        if hasattr(title_bar, "titleLabel"):
+            title_bar.titleLabel.hide()
+        # Replace icon label with logo
+        logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
+        if os.path.exists(logo_path) and hasattr(title_bar, "iconLabel"):
+            pixmap = QPixmap(logo_path)
+            # Scale to fit height 28px, keep aspect ratio
+            scaled = pixmap.scaledToHeight(48, Qt.SmoothTransformation)
+            title_bar.iconLabel.setPixmap(scaled)
+            title_bar.iconLabel.setFixedSize(scaled.size())
 
     def _refresh_theme_styles(self):
         pages = [
@@ -2651,10 +2508,6 @@ class AiszrApp(SiliconApplication):
             self._bottom_bar._apply_theme_styles()
         self._apply_app_icon()
         self._style_voice_api_dialog()
-        try:
-            SiGlobal.siui.reloadAllWindowsStyleSheet()
-        except Exception:
-            pass
         _apply_qt_global_theme()
 
     def _activate_ai(self):
@@ -2741,35 +2594,17 @@ class AiszrApp(SiliconApplication):
         config = self._voice_page.get_streaming_config_dict()
         if not config.get("video_path"):
             self._set_page(4)
-            self.LayerRightMessageSidebar().send(
-                title="一键开播",
-                text="请先在 AI 语音 / 推流 页选择一段绿幕素材，再次点击一键开播。",
-                msg_type=2,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_info_filled"),
-                fold_after=4000,
-            )
+            InfoBar.info(title="一键开播", content="请先在 AI 语音 / 推流 页选择一段绿幕素材，再次点击一键开播。", parent=self)
             return
         if config.get("avatar_ready") is False:
             self._set_page(4)
-            self.LayerRightMessageSidebar().send(
-                title="一键开播",
-                text="当前主播形象还在处理，完成后再点击一键开播。",
-                msg_type=2,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_info_filled"),
-                fold_after=4000,
-            )
+            InfoBar.info(title="一键开播", content="当前主播形象还在处理，完成后再点击一键开播。", parent=self)
             return
         try:
             self._worker.start_digital_human(config)
         except Exception as e:
             logger.warning("Quick start: start_digital_human failed: {}", e)
-            self.LayerRightMessageSidebar().send(
-                title="开播失败",
-                text=f"无法启动推流任务：{e}",
-                msg_type=4,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_error_circle_filled"),
-                fold_after=6000,
-            )
+            InfoBar.error(title="开播失败", content=f"无法启动推流任务：{e}", parent=self)
             return
         logger.info("Quick start dispatched (digital-human stream): {}", config.get("video_path"))
 
@@ -2787,11 +2622,7 @@ class AiszrApp(SiliconApplication):
 
     def _on_error(self, msg: str):
         logger.error("App error: {}", msg)
-        self.LayerRightMessageSidebar().send(
-            title="错误", text=msg, msg_type=4,
-            icon=SiGlobal.siui.iconpack.get("ic_fluent_error_circle_filled"),
-            fold_after=5000,
-        )
+        InfoBar.error(title="错误", content=msg, parent=self)
 
     def _on_digital_human_result(self, payload: object):
         """Surface streaming pipeline failures and OBS auto-config warnings
@@ -2802,20 +2633,12 @@ class AiszrApp(SiliconApplication):
         # Hard failure: pipeline didn't reach STREAMING state
         if payload.get("ok") is False:
             msg = payload.get("message", "推流失败")
-            self.LayerRightMessageSidebar().send(
-                title="开播失败", text=msg, msg_type=4,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_error_circle_filled"),
-                fold_after=8000,
-            )
+            InfoBar.error(title="开播失败", content=msg, parent=self)
             return
         # Soft warning: ffmpeg is streaming but OBS config failed
         warning = payload.get("obs_warning")
         if warning:
-            self.LayerRightMessageSidebar().send(
-                title="OBS 自动配置失败", text=warning, msg_type=3,
-                icon=SiGlobal.siui.iconpack.get("ic_fluent_warning_filled"),
-                fold_after=12000,
-            )
+            InfoBar.warning(title="OBS 自动配置失败", content=warning, parent=self)
 
     def closeEvent(self, event):
         from audio_output import stop_all_audio

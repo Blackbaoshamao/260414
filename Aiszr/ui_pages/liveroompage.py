@@ -13,54 +13,29 @@ from ui_theme import _mix_hex_colors
 from ui_theme import apply_theme
 
 
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, pyqtProperty, Qt, QTimer, QRect, QSize, QPropertyAnimation, QEasingCurve, QPointF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QBrush, QIcon
-from PyQt5.QtSvg import QSvgRenderer
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QRect, QSize
+from PyQt5.QtGui import QColor, QFont, QPen
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QTextBrowser, QTextEdit, QLabel, QPushButton, QLineEdit, QCheckBox,
     QDialog, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFileDialog,
     QInputDialog, QFrame, QAbstractButton, QSpinBox, QDoubleSpinBox,
-    QSizePolicy, QComboBox, QScrollArea, QApplication, QApplication, QTextBrowser, QTextEdit, QLabel, QPushButton, QLineEdit, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFileDialog, QInputDialog, QFrame, QAbstractButton, QSpinBox, QDoubleSpinBox, QSizePolicy, QComboBox, QScrollArea)
-from siui.core import SiColor, SiGlobal, GlobalFont, Si
-from siui.gui import SiFont
-from siui.components.page import SiPage
-from siui.components.widgets import (SiDenseHContainer, SiDenseVContainer,
-    SiLabel, SiLineEdit, SiPushButton, SiSvgLabel)
-from siui.components.titled_widget_group import SiTitledWidgetGroup
-from siui.components.option_card import SiOptionCardLinear
-from siui.components.combobox.combobox import SiComboBox
-from siui.components.slider import SiSliderH
-from siui.templates.application.components.dialog.modal import SiModalDialog
+    QSizePolicy, QComboBox, QScrollArea, QApplication)
+from fluent_page import FluentPage
 import ui_theme as theme
 from loguru import logger
-from ui import CaptureWorker, DanmakuDisplay, FilterCheckBox
 from ui_components import MacButton, MacLineEdit, MacComboBox
 
 
-def _fluent_icon(name: str, size: int = 18) -> QIcon:
-    """Render a Fluent SVG icon (from PyQt-SiliconUI icon pack) to a QIcon."""
-    try:
-        svg = SiGlobal.siui.iconpack.get(name)
-    except KeyError:
-        return QIcon()
-    if isinstance(svg, str):
-        svg = svg.encode("utf-8")
-    renderer = QSvgRenderer(svg)
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    renderer.render(painter)
-    painter.end()
-    return QIcon(pixmap)
-
-
-class LiveRoomPage(SiPage):
+class LiveRoomPage(FluentPage):
     connect_requested = pyqtSignal(str, str)
     live_capture_toggle_requested = pyqtSignal(bool, str)
     clear_session_requested = pyqtSignal()
     message_filters_changed = pyqtSignal(dict)
 
-    def __init__(self, worker: CaptureWorker, parent=None):
+    def __init__(self, worker, parent=None):
+        from ui import CaptureWorker, DanmakuDisplay, FilterCheckBox
+        self._DanmakuDisplay = DanmakuDisplay
+        self._FilterCheckBox = FilterCheckBox
         super().__init__(parent)
         self.setPadding(0)
         self.setScrollMaximumWidth(10000)
@@ -86,37 +61,37 @@ class LiveRoomPage(SiPage):
 
         self._capture_source = "douyin"
         self._source_combo = MacComboBox()
-        self._source_combo.addItem(_fluent_icon("ic_fluent_music_note_2_filled"),
-                                    "抖音", "douyin")
-        self._source_combo.addItem(_fluent_icon("ic_fluent_chat_filled"),
-                                    "微信", "wechat")
-        self._source_combo.setFixedSize(118, 34)
+        self._source_combo.addItem("抖音", "douyin")
+        self._source_combo.addItem("微信", "wechat")
         self._source_combo.setFont(FONT_UI)
+        source_h = max(36, self._source_combo.fontMetrics().height() + 16)
+        self._source_combo.setFixedSize(128, source_h)
         self._source_combo.currentIndexChanged.connect(self._on_source_changed)
         top_bar.addWidget(self._source_combo)
 
         self._room_input = MacLineEdit(placeholder="输入直播间 ID 或 URL 后连接")
         self._room_input.setFont(FONT_MONO)
-        self._room_input.setFixedHeight(34)
+        top_control_h = max(36, self._room_input.fontMetrics().height() + 16)
+        self._room_input.setFixedHeight(top_control_h)
         self._room_input.returnPressed.connect(self._on_connect)
         top_bar.addWidget(self._room_input, stretch=1)
 
         self._live_capture_btn = MacButton("启动", variant="secondary")
-        self._live_capture_btn.setFixedSize(112, 34)
         self._live_capture_btn.setFont(FONT_UI)
+        self._live_capture_btn.setFixedSize(112, top_control_h)
         self._live_capture_btn.clicked.connect(self._on_live_capture_button_clicked)
         top_bar.addWidget(self._live_capture_btn)
 
         self._connect_btn = MacButton("连接", variant="primary")
-        self._connect_btn.setFixedSize(72, 34)
         self._connect_btn.setFont(FONT_UI)
+        self._connect_btn.setFixedSize(72, top_control_h)
         self._connect_btn.clicked.connect(self._on_connect)
         self._connect_btn.setEnabled(False)
         top_bar.addWidget(self._connect_btn)
 
         self._reset_btn = MacButton("重登", variant="destructive")
-        self._reset_btn.setFixedSize(60, 34)
         self._reset_btn.setFont(FONT_UI)
+        self._reset_btn.setFixedSize(60, top_control_h)
         self._reset_btn.clicked.connect(self.clear_session_requested.emit)
         top_bar.addWidget(self._reset_btn)
 
@@ -132,7 +107,7 @@ class LiveRoomPage(SiPage):
         self._metrics_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         top_bar.addWidget(self._metrics_label)
 
-        self._top_bar_widget.setFixedHeight(40)
+        self._top_bar_widget.setFixedHeight(max(42, top_control_h + 6, source_h + 6))
 
         # Title
         self._danmaku_title_label = QLabel("直播弹幕", container)
@@ -144,7 +119,7 @@ class LiveRoomPage(SiPage):
         filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.setSpacing(12)
         for key, label in _MESSAGE_FILTER_OPTIONS:
-            checkbox = FilterCheckBox(label, self._filter_bar)
+            checkbox = self._FilterCheckBox(label, self._filter_bar)
             checkbox.setChecked(self._message_filters.get(key, True))
             checkbox.stateChanged.connect(
                 lambda state, filter_key=key: self._on_filter_toggled(filter_key, state)
@@ -155,9 +130,9 @@ class LiveRoomPage(SiPage):
         self._filter_bar.setFixedHeight(28)
 
         # Danmaku displays — two independent displays, toggled by source
-        self._display_dy = DanmakuDisplay(container)
+        self._display_dy = self._DanmakuDisplay(container)
         self._display_dy.set_allowed_types(self._active_message_types())
-        self._display_wx = DanmakuDisplay(container)
+        self._display_wx = self._DanmakuDisplay(container)
         self._display_wx.set_allowed_types(self._active_message_types())
         self._display_wx.hide()
         self._persist_message_filters()
@@ -181,7 +156,7 @@ class LiveRoomPage(SiPage):
         QTimer.singleShot(0, self._apply_danmaku_geometry)
 
     def _apply_danmaku_geometry(self):
-        h = self.scroll_area.height()
+        h = self._scroll.height()
         if h <= 0:
             return
         self._live_container.setFixedHeight(h)

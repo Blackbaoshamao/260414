@@ -10,10 +10,6 @@ import time
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, THIS_DIR)
-# SiliconUI lives next to the project, not on the import path.
-SIUI_DIR = os.path.join(os.path.dirname(THIS_DIR), "PyQt-SiliconUI")
-if os.path.isdir(SIUI_DIR):
-    sys.path.insert(0, SIUI_DIR)
 
 # Output directory for screenshots
 OUT_DIR = r"d:\Pjt\260414\thesis_figs"

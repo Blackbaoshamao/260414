@@ -22,10 +22,6 @@ from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QListWidget, QFormLayout,
     QDialogButtonBox, QFrame, QCheckBox, QSpinBox, QDoubleSpinBox,
     QComboBox, QListWidgetItem, QMessageBox, QSizePolicy, QLabel, QPushButton, QLineEdit, QCheckBox, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFrame, QSpinBox, QDoubleSpinBox, QSizePolicy, QComboBox, QListWidgetItem)
-from siui.core import SiGlobal
-from siui.components.widgets import SiPushButton, SiDenseHContainer, SiLineEdit, SiLabel
-from siui.components.combobox.combobox import SiComboBox
-from siui.components.option_card import SiOptionCardLinear
 import ui_theme as theme
 from ui_settings import _save_settings
 from ui_components import MacButton, MacLineEdit, MacComboBox

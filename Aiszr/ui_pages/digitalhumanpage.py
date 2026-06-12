@@ -20,25 +20,16 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QDialog, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFileDialog,
     QInputDialog, QFrame, QAbstractButton, QSpinBox, QDoubleSpinBox,
     QSizePolicy, QComboBox, QScrollArea, QApplication, QApplication, QTextBrowser, QTextEdit, QLabel, QPushButton, QLineEdit, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFileDialog, QInputDialog, QFrame, QAbstractButton, QSpinBox, QDoubleSpinBox, QSizePolicy, QComboBox, QScrollArea)
-from siui.core import SiColor, SiGlobal, GlobalFont, Si
-from siui.gui import SiFont
-from siui.components.page import SiPage
-from siui.components.widgets import (SiDenseHContainer, SiDenseVContainer,
-    SiLabel, SiLineEdit, SiPushButton, SiSvgLabel)
-from siui.components.titled_widget_group import SiTitledWidgetGroup
-from siui.components.option_card import SiOptionCardLinear
-from siui.components.combobox.combobox import SiComboBox
-from siui.components.slider import SiSliderH
-from siui.templates.application.components.dialog.modal import SiModalDialog
+from qfluentwidgets import PushButton, PrimaryPushButton
+from fluent_page import FluentPage
 import ui_theme as theme
 from loguru import logger
 from ui_constants import _CARD_H
 from ui_settings import _save_settings
-from ui import _AddCard, _VideoThumbCard
+from ui_components import AddCard as _AddCard, VideoThumbCard as _VideoThumbCard
 
 
-class DigitalHumanPage(SiPage):
-    back_requested = pyqtSignal()
+class DigitalHumanPage(FluentPage):
     digital_human_start_requested = pyqtSignal(object)
     digital_human_stop_requested = pyqtSignal()
     _preview_state_changed = pyqtSignal(str, str)  # (button_text, state)
@@ -54,23 +45,17 @@ class DigitalHumanPage(SiPage):
         self._obs_password = ""
         self._preview_state_changed.connect(self._apply_preview_state)
 
-        container = SiTitledWidgetGroup(self)
-        container.setSpacing(16)
+        container = QWidget(self)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 0, 8, 0)
+        container_layout.setSpacing(8)
 
         line_edit_ss = _build_input_field_stylesheet()
 
-        # Back button
-        back_area = SiDenseHContainer(self)
-        back_area.setFixedHeight(32)
-        back_btn = SiPushButton(self)
-        back_btn.resize(80, 28)
-        back_btn.attachment().setText("返回")
-        back_btn.clicked.connect(self.back_requested.emit)
-        back_area.addWidget(back_btn)
-        container.addWidget(back_area)
-
         # Section: Script & Audio (unified streaming console)
-        container.addTitle("带货话术")
+        _title = QLabel("带货话术", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
         text_ss = f"""
             QTextEdit {{
                 background-color: {theme.CLR_BG_ELEVATED};
@@ -91,7 +76,7 @@ class DigitalHumanPage(SiPage):
         self._product_edit.setFixedHeight(90)
         self._product_edit.setPlaceholderText("输入商品名称、卖点、价格等详细信息...")
         self._product_edit.setStyleSheet(text_ss)
-        container.addWidget(self._product_edit)
+        container_layout.addWidget(self._product_edit)
 
         gen_row = QWidget(self)
         gen_layout = QHBoxLayout(gen_row)
@@ -102,24 +87,24 @@ class DigitalHumanPage(SiPage):
         self._generate_script_btn.clicked.connect(self._on_generate_script)
         gen_layout.addWidget(self._generate_script_btn)
         gen_layout.addStretch(1)
-        container.addWidget(gen_row)
+        container_layout.addWidget(gen_row)
 
         self._gen_status_label = QLabel("", self)
         self._gen_status_label.setWordWrap(True)
         self._gen_status_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none; font-size: 13px;")
-        container.addWidget(self._gen_status_label)
+        container_layout.addWidget(self._gen_status_label)
 
-        container.addWidget(_placeholder_h(8))
+        container_layout.addWidget(_placeholder_h(8))
         sep1 = QFrame(self)
         sep1.setFrameShape(QFrame.HLine)
         sep1.setStyleSheet(f"color: {theme.CLR_BORDER}; border: none; background-color: {theme.CLR_BORDER}; max-height: 1px;")
-        container.addWidget(sep1)
-        container.addWidget(_placeholder_h(4))
+        container_layout.addWidget(sep1)
+        container_layout.addWidget(_placeholder_h(4))
 
         self._script_edit = QTextEdit(self)
         self._script_edit.setPlaceholderText("输入主播话术内容，或使用上方 AI 生成...")
         self._script_edit.setStyleSheet(text_ss)
-        container.addWidget(self._script_edit)
+        container_layout.addWidget(self._script_edit)
 
         audio_btn_row = QWidget(self)
         audio_btn_layout = QHBoxLayout(audio_btn_row)
@@ -134,16 +119,18 @@ class DigitalHumanPage(SiPage):
         self._preview_btn.clicked.connect(self._on_preview_audio)
         audio_btn_layout.addWidget(self._preview_btn)
         audio_btn_layout.addStretch(1)
-        container.addWidget(audio_btn_row)
+        container_layout.addWidget(audio_btn_row)
 
         self._audio_status_label = QLabel("", self)
         self._audio_status_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; border: none; font-size: 13px;")
-        container.addWidget(self._audio_status_label)
+        container_layout.addWidget(self._audio_status_label)
 
         self._voice_settings_state = VoiceSettings.from_dict(DEFAULT_VOICE_SETTINGS.to_dict())
 
         # Section: Avatar gallery
-        container.addTitle("主播形象（右键移除，左键选中）")
+        _title = QLabel("主播形象（右键移除，左键选中）", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
         self._gallery_inner = QWidget(self)
         self._gallery_inner.setFixedHeight(_CARD_H)
         self._gallery_inner.setStyleSheet("background: transparent;")
@@ -151,39 +138,48 @@ class DigitalHumanPage(SiPage):
         self._gallery_layout = QHBoxLayout(self._gallery_inner)
         self._gallery_layout.setContentsMargins(0, 0, 0, 0)
         self._gallery_layout.setSpacing(12)
-        container.addWidget(self._gallery_inner)
+        container_layout.addWidget(self._gallery_inner)
         self._rebuild_gallery()
 
         # Section: Streaming control
-        container.addTitle("推流控制")
+        _title = QLabel("推流控制", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
         self._status_label = QLabel("空闲", self)
         self._status_label.setWordWrap(True)
-        container.addWidget(self._status_label)
+        container_layout.addWidget(self._status_label)
 
-        btn_row = SiDenseHContainer(self)
+        btn_row = QWidget(self)
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
         btn_row.setFixedHeight(40)
-        self._start_btn = SiPushButton(self)
+        self._start_btn = PrimaryPushButton("一键推流", parent=self)
         self._start_btn.resize(120, 32)
-        self._start_btn.attachment().setText("一键推流")
         self._start_btn.clicked.connect(self._on_start)
-        btn_row.addWidget(self._start_btn)
-        self._stop_btn = SiPushButton(self)
+        btn_layout.addWidget(self._start_btn)
+        self._stop_btn = PushButton("停止推流", parent=self)
         self._stop_btn.resize(100, 32)
-        self._stop_btn.attachment().setText("停止推流")
         self._stop_btn.clicked.connect(self._on_stop)
-        btn_row.addWidget(self._stop_btn)
-        container.addWidget(btn_row)
+        btn_layout.addWidget(self._stop_btn)
+        btn_layout.addStretch(1)
+        container_layout.addWidget(btn_row)
 
         # Save button
-        container.addTitle("操作")
-        save_area = SiDenseHContainer(self)
+        _title = QLabel("操作", self)
+        _title.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 8px;")
+        container_layout.addWidget(_title)
+        save_area = QWidget(self)
+        save_layout = QHBoxLayout(save_area)
+        save_layout.setContentsMargins(0, 0, 0, 0)
+        save_layout.setSpacing(8)
         save_area.setFixedHeight(36)
-        self._save_btn = SiPushButton(self)
+        self._save_btn = PushButton("保存配置", parent=self)
         self._save_btn.resize(100, 28)
-        self._save_btn.attachment().setText("保存配置")
         self._save_btn.clicked.connect(self._on_save)
-        save_area.addWidget(self._save_btn)
-        container.addWidget(save_area)
+        save_layout.addWidget(self._save_btn)
+        save_layout.addStretch(1)
+        container_layout.addWidget(save_area)
 
         self.setAttachment(container)
 

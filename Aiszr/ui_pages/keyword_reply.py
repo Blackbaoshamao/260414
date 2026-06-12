@@ -21,7 +21,7 @@ import ui_theme as theme
 from ui_theme import _build_text_area_stylesheet
 from ui_theme import SiSwitch
 from ui_components import MacCard, MacButton, MacLineEdit, MacComboBox
-from siui.components.page import SiPage
+from fluent_page import FluentPage
 
 from keyword_engine import KeywordEngine, KeywordTemplate, KeywordRule
 from keyword_rewriter import KeywordRewriteError, rewrite_keyword_reply
@@ -109,22 +109,7 @@ def _rewrite_icon(color: str) -> QIcon:
     return QIcon(pix)
 
 
-def _make_back_button(parent, back_signal) -> QWidget:
-    area = QWidget(parent)
-    area.setFixedSize(74, 34)
-    layout = QHBoxLayout(area)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(0)
-    btn = MacButton("返回", variant="secondary", parent=area)
-    btn.setFixedSize(68, 30)
-    btn.setToolTip("返回上一页")
-    btn.clicked.connect(back_signal.emit)
-    layout.addWidget(btn)
-    return area
-
-
-class KeywordReplyPage(SiPage):
-    back_requested = pyqtSignal()
+class KeywordReplyPage(FluentPage):
     auto_reply_toggled = pyqtSignal(bool)
     rules_changed = pyqtSignal()                # 用户保存了规则
     related_settings_changed = pyqtSignal()     # 用户改了冷却 / 速率限制
@@ -153,7 +138,8 @@ class KeywordReplyPage(SiPage):
         grid.setColumnStretch(0, 7)
         grid.setColumnStretch(1, 2)
 
-        grid.addWidget(self._build_rules_card(), 0, 0, alignment=Qt.AlignTop)
+        grid.addWidget(self._build_rules_card(), 0, 0)
+        grid.setRowStretch(0, 1)
 
         right_col = QVBoxLayout()
         right_col.setSpacing(10)
@@ -179,12 +165,6 @@ class KeywordReplyPage(SiPage):
         ly = QHBoxLayout(row)
         ly.setContentsMargins(14, 0, 14, 0)
         ly.setSpacing(12)
-        ly.addWidget(_make_back_button(self, self.back_requested))
-
-        self._hero_divider = QFrame(row)
-        self._hero_divider.setObjectName("KeywordHeroDivider")
-        self._hero_divider.setFixedSize(1, 30)
-        ly.addWidget(self._hero_divider)
 
         title_wrap = QWidget(row)
         title_wrap.setStyleSheet("background: transparent;")
@@ -236,10 +216,6 @@ class KeywordReplyPage(SiPage):
                 f"border: none;"
                 f"border-radius: {theme.RADIUS_LG}px;"
                 f"}}"
-            )
-        if hasattr(self, "_hero_divider"):
-            self._hero_divider.setStyleSheet(
-                f"QFrame#KeywordHeroDivider {{ background-color: {theme.CLR_HAIRLINE}; border: none; }}"
             )
         if hasattr(self, "_hero_title_accent"):
             accent = theme._mix_hex_colors(theme.CLR_ACCENT, theme.CLR_TEXT_PRI, 0.06)
@@ -455,7 +431,7 @@ class KeywordReplyPage(SiPage):
         self._rules_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._rules_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._rules_scroll.setStyleSheet(self._rules_scroll_stylesheet())
-        body.addWidget(self._rules_scroll)
+        body.addWidget(self._rules_scroll, stretch=1)
         return card
 
     def _rules_summary_stylesheet(self) -> str:
@@ -498,27 +474,35 @@ class KeywordReplyPage(SiPage):
         )
 
     def _rewrite_button_stylesheet(self) -> str:
+        fill = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_BG_CARD, 0.42)
+        fill_hover = theme._mix_hex_colors(fill, theme.CLR_BG_CARD, 0.26)
+        fill_pressed = theme._mix_hex_colors(fill, theme.CLR_TEXT_PRI, 0.10)
+        border = theme._mix_hex_colors(theme.CLR_BORDER, theme.CLR_TEXT_PRI, 0.12)
+        border_hover = theme._mix_hex_colors(border, theme.CLR_TEXT_PRI, 0.20)
+        border_pressed = theme._mix_hex_colors(border, theme.CLR_TEXT_PRI, 0.28)
+        disabled_fill = theme._mix_hex_colors(theme.CLR_BG_ELEVATED, theme.CLR_BG_INSET, 0.50)
         return (
             "QPushButton#KeywordRewriteButton {"
-            "background-color: #E9EAEE;"
-            "color: #000000;"
-            "border: 1px solid #A6ABB5;"
-            "border-radius: 7px;"
+            f"background-color: {fill};"
+            f"color: {theme.CLR_TEXT_PRI};"
+            f"border: 1px solid {border};"
+            f"border-radius: {theme.RADIUS_MD}px;"
             "padding: 0 11px 0 9px;"
             "font-weight: 600;"
             "}"
             "QPushButton#KeywordRewriteButton:hover {"
-            "background-color: #F6F7F9;"
-            "color: #000000;"
-            "border-color: #8D94A1;"
+            f"background-color: {fill_hover};"
+            f"border-color: {border_hover};"
             "}"
             "QPushButton#KeywordRewriteButton:pressed {"
-            "background-color: #D7DAE0;"
-            "color: #000000;"
-            "border-color: #858B96;"
+            f"background-color: {fill_pressed};"
+            f"border-color: {border_pressed};"
             "padding-top: 1px;"
             "}"
-            "QPushButton#KeywordRewriteButton:disabled { color: #000000; background-color: #E5E7EC; }"
+            "QPushButton#KeywordRewriteButton:disabled {"
+            f"color: {theme.CLR_TEXT_TERT};"
+            f"background-color: {disabled_fill};"
+            "}"
         )
 
     def _apply_rewrite_button_effect(self, button: QWidget):
@@ -528,30 +512,13 @@ class KeywordReplyPage(SiPage):
         shadow.setColor(QColor(0, 0, 0, 34))
         button.setGraphicsEffect(shadow)
 
-    # 规则区按内容收缩；规则很多时才在内部滚动，避免截图里的大面积空白。
-    _CHROME_OFFSET = 198
-
-    def _update_rules_scroll_height(self):
-        if not hasattr(self, "_rules_scroll"):
-            return
-        sa = getattr(self, "scroll_area", None)
-        avail = sa.height() if sa is not None and sa.height() > 0 else 600
-        row_count = max(1, len(self._rule_widgets))
-        desired = row_count * 138 + 16
-        max_height = max(260, avail - self._CHROME_OFFSET)
-        self._rules_scroll.setFixedHeight(max(150, min(desired, max_height)))
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # SiPage 只同步 attachment 的宽度，不管高度 → root 高度永远是初始值，
-        # 导致 setFixedHeight 在父布局空间不足时被压缩。这里手动把 attachment
-        # 高度顶到 scroll_area 的高度，让内部布局能拿到全部窗口高度。
         sa = getattr(self, "scroll_area", None)
         if sa is not None:
             att = sa.attachment()
             if att is not None and att.height() != sa.height():
                 att.resize(att.width(), sa.height())
-        self._update_rules_scroll_height()
 
     # ── Rule row ────────────────────────────────────────────
 
@@ -786,7 +753,6 @@ class KeywordReplyPage(SiPage):
         self._rules_layout.addWidget(card)
         self._rule_widgets.append(widgets)
         self._refresh_rules_summary()
-        self._update_rules_scroll_height()
         self._set_dirty(True)
 
     def _delete_rule(self, widgets: dict):
@@ -799,7 +765,6 @@ class KeywordReplyPage(SiPage):
         if not self._rule_widgets:
             self._show_empty_card()
         self._refresh_rules_summary()
-        self._update_rules_scroll_height()
         self._set_dirty(True)
 
     def _clear_rules(self):
@@ -868,7 +833,6 @@ class KeywordReplyPage(SiPage):
         if not self._rule_widgets:
             self._show_empty_card()
         self._refresh_rules_summary()
-        self._update_rules_scroll_height()
         self._set_dirty(False)
 
     def _refresh_rules_summary(self):
@@ -1012,10 +976,9 @@ class KeywordReplyPage(SiPage):
     # ── Theme hot-switch ────────────────────────────────────
 
     def _apply_theme_styles(self):
-        # 让 SiPage chrome 跟主题走 — 默认 siui 给一个亮灰色，跟我们的 CLR_BG_CARD 黑对比刺眼
-        self.setStyleSheet(f"SiPage {{ background-color: {theme.CLR_BG}; }}")
-        if hasattr(self, "scroll_area"):
-            self.scroll_area.setStyleSheet(
+        self.setStyleSheet(f"FluentPage {{ background-color: {theme.CLR_BG}; }}")
+        if hasattr(self, "_scroll"):
+            self._scroll.setStyleSheet(
                 f"QScrollArea {{ background-color: {theme.CLR_BG}; border: none; }}"
             )
         if hasattr(self, "_hero_title"):

@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Aiszr - AI 数字人直播平台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --white: #ffffff; --black: #0a0a0a; --text: #1a1a1a;
+            --text-sec: #777; --accent: #0066ff; --accent-light: #e8f0ff;
+            --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+            --gray-1: #f7f7f8; --gray-2: #ececee;
+            --radius: 24px; --mono: 'JetBrains Mono', monospace;
+        }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--white); color: var(--text);
+            overflow-x: hidden; line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Grain */
+        body::after {
+            content: ''; position: fixed; inset: 0;
+            pointer-events: none; z-index: 9990; opacity: 0.025;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            background-size: 128px;
+        }
+
+        /* Cursor */
+        .cursor-dot { position: fixed; width: 6px; height: 6px; background: var(--black); border-radius: 50%; pointer-events: none; z-index: 9999; mix-blend-mode: difference; }
+        .cursor-ring { position: fixed; width: 36px; height: 36px; border: 1px solid rgba(0,0,0,0.25); border-radius: 50%; pointer-events: none; z-index: 9998; mix-blend-mode: difference; transition: width .3s cubic-bezier(.23,1,.32,1), height .3s cubic-bezier(.23,1,.32,1), border-color .3s; }
+        .cursor-ring.hover { width: 64px; height: 64px; border-color: var(--accent); }
+        #particle-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 9997; }
+
+        /* Loader */
+        .loader { position: fixed; inset: 0; background: var(--black); z-index: 10000; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 24px; }
+        .loader-text { font-family: 'Instrument Serif', serif; font-size: 3rem; color: var(--white); letter-spacing: -0.02em; overflow: hidden; }
+        .loader-text span { display: inline-block; opacity: 0; transform: translateY(100%); }
+        .loader-bar { width: 120px; height: 2px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
+        .loader-bar-fill { width: 0%; height: 100%; background: var(--white); border-radius: 2px; }
+
+        /* Nav */
+        nav { position: fixed; top: 0; width: 100%; height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 48px; z-index: 1000; transition: all .4s; }
+        nav.scrolled { background: rgba(255,255,255,0.8); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-bottom: 1px solid rgba(0,0,0,0.06); }
+        .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 1rem; font-weight: 600; color: var(--text); letter-spacing: 1px; }
+        .nav-links { display: flex; gap: 36px; list-style: none; }
+        .nav-links a { color: var(--text-sec); text-decoration: none; font-size: .88rem; font-weight: 500; transition: color .3s; position: relative; }
+        .nav-links a::after { content: ''; position: absolute; bottom: -4px; left: 0; width: 0; height: 1px; background: var(--text); transition: width .4s cubic-bezier(.23,1,.32,1); }
+        .nav-links a:hover { color: var(--text); }
+        .nav-links a:hover::after { width: 100%; }
+
+        /* Hero */
+        .hero { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 120px 48px 80px; position: relative; }
+        .hero-orb { position: absolute; border-radius: 50%; filter: blur(80px); pointer-events: none; }
+        .hero-orb-1 { width: 600px; height: 600px; background: radial-gradient(circle, rgba(0,102,255,0.08), transparent 70%); top: -100px; right: -100px; }
+        .hero-orb-2 { width: 400px; height: 400px; background: radial-gradient(circle, rgba(0,102,255,0.05), transparent 70%); bottom: 0; left: -100px; }
+        .hero-tag { display: inline-flex; align-items: center; gap: 8px; padding: 8px 20px; background: var(--gray-1); border: 1px solid var(--gray-2); border-radius: 100px; font-size: .82rem; font-weight: 500; color: var(--text-sec); margin-bottom: 40px; }
+        .hero-tag .pulse { width: 6px; height: 6px; background: var(--green); border-radius: 50%; animation: pulse-dot 2s ease-in-out infinite; }
+        @keyframes pulse-dot { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { opacity: .7; box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+        .hero h1 { font-family: 'Instrument Serif', serif; font-size: clamp(3rem,7vw,6.5rem); font-weight: 400; letter-spacing: -0.04em; line-height: 1; margin-bottom: 32px; position: relative; padding: 0 16px; }
+        .hero h1 .line { display: block; }
+        .hero h1 .italic { font-style: italic; color: var(--accent); }
+        .hero-brand { font-family: 'JetBrains Mono', monospace; font-size: .72rem; font-weight: 600; letter-spacing: 6px; text-transform: uppercase; color: var(--text-sec); margin-bottom: 20px; opacity: .6; }
+        .hero-counter { position: absolute; right: -60px; bottom: -20px; font-family: 'JetBrains Mono', monospace; font-size: .7rem; color: var(--text-sec); letter-spacing: 1px; opacity: .5; writing-mode: vertical-lr; }
+        .hero-sub { font-size: 1.2rem; color: var(--text-sec); max-width: 480px; line-height: 1.8; margin-bottom: 48px; position: relative; }
+        .hero-actions { display: flex; gap: 16px; position: relative; }
+        .btn { display: inline-flex; align-items: center; gap: 8px; padding: 16px 36px; border-radius: 100px; font-size: .95rem; font-weight: 600; text-decoration: none; border: none; cursor: pointer; transition: transform .4s cubic-bezier(.23,1,.32,1), box-shadow .4s; -webkit-tap-highlight-color: transparent; font-family: 'DM Sans', sans-serif; }
+        .btn:active { transform: scale(.96) !important; }
+        .btn-primary { background: var(--black); color: var(--white); }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
+        .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--gray-2); }
+        .btn-ghost:hover { border-color: var(--text); transform: translateY(-2px); }
+        .btn-arrow { transition: transform .3s cubic-bezier(.23,1,.32,1); }
+        .btn:hover .btn-arrow { transform: translateX(4px); }
+
+        /* Marquee */
+        .marquee { padding: 48px 0; overflow: hidden; border-top: 1px solid var(--gray-2); border-bottom: 1px solid var(--gray-2); }
+        .marquee-track { display: flex; gap: 48px; animation: marquee 25s linear infinite; width: max-content; }
+        .marquee-item { font-size: 1rem; font-weight: 500; color: var(--gray-2); white-space: nowrap; display: flex; align-items: center; gap: 16px; }
+        .marquee-item .sep { width: 4px; height: 4px; background: var(--gray-2); border-radius: 50%; }
+        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+
+        /* Shared */
+        .section-eyebrow { font-size: .75rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; }
+        .section-title { font-family: 'Instrument Serif', serif; font-size: clamp(2.5rem,5vw,4rem); font-weight: 400; letter-spacing: -0.03em; line-height: 1.1; margin-bottom: 16px; }
+        .section-desc { font-size: 1.1rem; color: var(--text-sec); max-width: 480px; line-height: 1.7; margin-bottom: 64px; }
+
+        /* Bento */
+        .bento { padding: 120px 24px; max-width: 1100px; margin: 0 auto; }
+        .bento-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .bento-card { background: var(--gray-1); border-radius: var(--radius); padding: 36px 28px; position: relative; overflow: hidden; transition: transform .5s cubic-bezier(.23,1,.32,1), box-shadow .5s; cursor: default; min-height: 220px; display: flex; flex-direction: column; border: 1px solid transparent; }
+        .bento-card:hover { transform: translateY(-4px); box-shadow: 0 16px 48px rgba(0,0,0,0.06); border-color: var(--gray-2); }
+        .bento-icon { width: 48px; height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; margin-bottom: 24px; flex-shrink: 0; }
+        .bento-icon svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .bento-card h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.02em; }
+        .bento-card p { font-size: .92rem; color: var(--text-sec); line-height: 1.65; }
+
+        /* Stats */
+        .stats { padding: 80px 24px; background: var(--black); color: var(--white); }
+        .stats-inner { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: repeat(4,1fr); gap: 32px; text-align: center; }
+        .stat-num { font-family: 'Instrument Serif', serif; font-size: clamp(2.5rem,5vw,4rem); font-weight: 400; letter-spacing: -0.04em; margin-bottom: 8px; }
+        .stat-label { font-size: .85rem; color: rgba(255,255,255,0.5); font-weight: 500; }
+
+        /* Horizontal Showcase */
+        .showcase-section { padding: 120px 0; overflow: hidden; }
+        .showcase-header { padding: 0 48px; margin-bottom: 64px; }
+        .showcase-track { display: flex; gap: 24px; padding: 0 48px; width: max-content; }
+        .showcase-card { width: 420px; min-height: 480px; border-radius: var(--radius); padding: 40px; display: flex; flex-direction: column; justify-content: flex-end; position: relative; overflow: hidden; flex-shrink: 0; transition: transform .5s cubic-bezier(.23,1,.32,1); cursor: default; }
+        .showcase-card:hover { transform: translateY(-4px); }
+        .showcase-card.dark { background: var(--black); color: var(--white); }
+        .showcase-card.light { background: var(--gray-1); color: var(--text); }
+        .showcase-card.blue { background: var(--accent); color: var(--white); }
+        .showcase-card .card-num { font-family: 'Instrument Serif', serif; font-size: 6rem; position: absolute; top: 24px; right: 32px; opacity: .08; line-height: 1; }
+        .showcase-card .card-tag { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; opacity: .5; margin-bottom: 12px; }
+        .showcase-card h3 { font-family: 'Instrument Serif', serif; font-size: 2rem; font-weight: 400; letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 12px; }
+        .showcase-card p { font-size: .95rem; opacity: .6; line-height: 1.6; max-width: 300px; }
+        @media (max-width: 768px) { .showcase-card { width: 300px; min-height: 360px; } }
+
+        /* Danmaku Demo */
+        .danmaku-section { padding: 120px 24px; max-width: 1000px; margin: 0 auto; }
+        .danmaku-demo { background: var(--gray-1); border-radius: var(--radius); padding: 48px; position: relative; overflow: hidden; min-height: 400px; }
+        .danmaku-demo-header { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; }
+        .danmaku-dot { width: 8px; height: 8px; background: var(--red); border-radius: 50%; animation: pulse-dot 1.5s ease-in-out infinite; }
+        .danmaku-demo-title { font-weight: 600; font-size: .9rem; }
+        .danmaku-container { position: relative; height: 280px; overflow: hidden; }
+        .danmaku-msg { position: absolute; padding: 8px 16px; background: var(--white); border-radius: 100px; font-size: .85rem; font-weight: 500; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.06); opacity: 0; }
+        .danmaku-msg .nickname { color: var(--accent); font-weight: 600; margin-right: 6px; }
+        .danmaku-ai-reply { position: absolute; right: 24px; padding: 12px 20px; background: var(--accent); color: var(--white); border-radius: 16px 16px 4px 16px; font-size: .88rem; max-width: 320px; opacity: 0; box-shadow: 0 4px 16px rgba(0,102,255,0.2); }
+
+        /* Terminal */
+        .terminal-section { padding: 120px 24px; max-width: 900px; margin: 0 auto; }
+        .terminal { background: #1e1e2e; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        .terminal-bar { display: flex; align-items: center; gap: 8px; padding: 14px 20px; background: #181825; }
+        .terminal-dot { width: 12px; height: 12px; border-radius: 50%; }
+        .terminal-dot.r { background: #f38ba8; }
+        .terminal-dot.y { background: #f9e2af; }
+        .terminal-dot.g { background: #a6e3a1; }
+        .terminal-title { color: #6c7086; font-size: .78rem; font-family: var(--mono); margin-left: 8px; }
+        .terminal-body { padding: 24px; font-family: var(--mono); font-size: .82rem; line-height: 1.8; color: #cdd6f4; min-height: 320px; }
+        .terminal-line { opacity: 0; transform: translateY(8px); }
+        .terminal-line .prompt { color: #a6e3a1; }
+        .terminal-line .cmd { color: #89b4fa; }
+        .terminal-line .comment { color: #6c7086; }
+        .terminal-line .success { color: #a6e3a1; }
+        .terminal-line .warn { color: #f9e2af; }
+        .terminal-line .info { color: #89dceb; }
+        .terminal-line .accent { color: #cba6f7; }
+        .terminal-cursor { display: inline-block; width: 8px; height: 16px; background: #cdd6f4; animation: blink 1s step-end infinite; vertical-align: text-bottom; }
+        @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+        /* Architecture Diagram */
+        .arch-section { padding: 120px 24px; max-width: 1100px; margin: 0 auto; }
+        .arch-pipeline { margin-top: 64px; position: relative; padding: 0 20px; }
+        .arch-pipeline::before { content: ''; position: absolute; top: 50%; left: 60px; right: 60px; height: 2px; background: var(--gray-2); transform: translateY(-50%); z-index: 0; }
+        .arch-pipeline::after { content: ''; position: absolute; top: 50%; left: 60px; right: 60px; height: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0, var(--accent) 8px, transparent 8px, transparent 20px); opacity: .4; transform: translateY(-50%); z-index: 0; animation: flowMove 1.5s linear infinite; }
+        @keyframes flowMove { 0% { background-position: 0 0; } 100% { background-position: 20px 0; } }
+        .arch-nodes { display: flex; justify-content: space-between; position: relative; z-index: 1; }
+        .arch-node { background: var(--white); border: 1px solid var(--gray-2); border-radius: 20px; padding: 24px 20px; width: 140px; text-align: center; transition: all .4s cubic-bezier(.23,1,.32,1); cursor: default; }
+        .arch-node:hover { transform: translateY(-6px); box-shadow: 0 12px 36px rgba(0,0,0,0.08); border-color: var(--accent); }
+        .arch-node .icon { width: 48px; height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; transition: transform .3s; }
+        .arch-node:hover .icon { transform: scale(1.1); }
+        .arch-node .icon svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .arch-node .name { font-weight: 700; font-size: .82rem; margin-bottom: 2px; }
+        .arch-node .desc { font-size: .7rem; color: var(--text-sec); }
+        .arch-node.playwright .icon { background: #e0f2fe; color: #0284c7; }
+        .arch-node.decoder .icon { background: #fef3c7; color: #d97706; }
+        .arch-node.ai .icon { background: #ede9fe; color: #7c3aed; }
+        .arch-node.tts .icon { background: #dcfce7; color: #16a34a; }
+        .arch-node.obs .icon { background: #fce7f3; color: #db2777; }
+        .arch-node.rtmp .icon { background: #fff7ed; color: #ea580c; }
+        @media (max-width: 768px) {
+            .arch-nodes { flex-wrap: wrap; gap: 12px; justify-content: center; }
+            .arch-node { width: calc(50% - 6px); }
+            .arch-pipeline::before, .arch-pipeline::after { display: none; }
+        }
+
+        /* Feature Tabs */
+        .tabs-section { padding: 120px 24px; max-width: 1000px; margin: 0 auto; }
+        .tabs-nav { display: flex; gap: 8px; margin-bottom: 48px; flex-wrap: wrap; }
+        .tab-btn { padding: 10px 24px; border-radius: 100px; border: 1px solid var(--gray-2); background: transparent; font-size: .88rem; font-weight: 500; cursor: pointer; transition: all .3s; font-family: 'DM Sans', sans-serif; color: var(--text-sec); }
+        .tab-btn.active { background: var(--black); color: var(--white); border-color: var(--black); }
+        .tab-btn:hover:not(.active) { border-color: var(--text); color: var(--text); }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+        .tab-visual { background: var(--gray-1); border-radius: var(--radius); height: 320px; display: flex; align-items: center; justify-content: center; font-size: 4rem; position: relative; overflow: hidden; }
+        .tab-content h3 { font-family: 'Instrument Serif', serif; font-size: 2rem; font-weight: 400; margin-bottom: 16px; letter-spacing: -0.02em; }
+        .tab-content p { color: var(--text-sec); line-height: 1.7; margin-bottom: 24px; }
+        .tab-content ul { list-style: none; }
+        .tab-content li { padding: 8px 0; font-size: .92rem; color: var(--text-sec); display: flex; align-items: center; gap: 10px; }
+        .tab-content .check { color: var(--green); font-weight: 700; }
+
+        /* Ecosystem */
+        .ecosystem { padding: 100px 24px; text-align: center; }
+        .eco-grid { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin-top: 48px; }
+        .eco-item { width: 88px; height: 88px; background: var(--gray-1); border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; transition: all .4s cubic-bezier(.23,1,.32,1); cursor: default; border: 1px solid transparent; }
+        .eco-item svg { width: 26px; height: 26px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+        .eco-item span { font-size: .65rem; font-weight: 600; color: var(--text-sec); letter-spacing: .3px; }
+        .eco-item:hover { transform: translateY(-6px); border-color: var(--gray-2); box-shadow: 0 8px 24px rgba(0,0,0,0.06); }
+
+        /* CTA */
+        .cta { padding: 160px 24px; text-align: center; position: relative; overflow: hidden; }
+        .cta-orb { position: absolute; width: 600px; height: 600px; border-radius: 50%; background: radial-gradient(circle, rgba(0,102,255,0.07), transparent 65%); top: 50%; left: 50%; transform: translate(-50%,-50%); pointer-events: none; filter: blur(40px); }
+        .cta h2 { font-family: 'Instrument Serif', serif; font-size: clamp(3rem,7vw,5.5rem); font-weight: 400; letter-spacing: -0.04em; line-height: 1.05; margin-bottom: 24px; position: relative; }
+        .cta p { font-size: 1.15rem; color: var(--text-sec); margin-bottom: 48px; position: relative; }
+        .cta .btn { position: relative; }
+
+        /* Footer */
+        footer { padding: 48px; border-top: 1px solid var(--gray-2); display: flex; justify-content: space-between; align-items: center; font-size: .85rem; color: var(--text-sec); }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a { color: var(--text-sec); text-decoration: none; transition: color .3s; }
+        .footer-links a:hover { color: var(--text); }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            nav { padding: 0 20px; }
+            .nav-links { display: none; }
+            .bento-grid { grid-template-columns: 1fr; }
+            .stats-inner { grid-template-columns: repeat(2,1fr); }
+            .tab-panel.active { grid-template-columns: 1fr; }
+            .cursor-dot, .cursor-ring { display: none; }
+            footer { flex-direction: column; gap: 16px; text-align: center; }
+            .eco-grid { gap: 16px; }
+            .eco-item { width: 72px; height: 72px; }
+            .eco-item svg { width: 22px; height: 22px; }
+        }
+
+        /* Tab Panel Hover */
+        .tab-visual { transition: transform .4s cubic-bezier(.23,1,.32,1), box-shadow .4s; }
+        .tab-visual:hover { transform: scale(1.02); box-shadow: 0 12px 40px rgba(0,0,0,0.08); }
+    </style>
+</head>
+<body>
+
+    <div class="cursor-dot"></div>
+    <div class="cursor-ring"></div>
+    <canvas id="particle-canvas"></canvas>
+
+    <!-- Loader -->
+    <div class="loader">
+        <div class="loader-text"><span>A</span><span>i</span><span>s</span><span>z</span><span>r</span><span>.</span></div>
+        <div class="loader-bar"><div class="loader-bar-fill"></div></div>
+    </div>
+
+    <!-- Nav -->
+    <nav>
+        <div class="nav-logo">Aiszr.</div>
+        <ul class="nav-links">
+            <li><a href="#features">功能</a></li>
+            <li><a href="#arch">架构</a></li>
+            <li><a href="#showcase">亮点</a></li>
+            <li><a href="#demo">演示</a></li>
+            <li><a href="#terminal">快速开始</a></li>
+            <li><a href="#cta">下载</a></li>
+        </ul>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="hero-orb hero-orb-1"></div>
+        <div class="hero-orb hero-orb-2"></div>
+        <div class="hero-tag"><span class="pulse"></span>AI 驱动的直播新范式</div>
+        <div class="hero-brand">Aiszr</div>
+        <h1>
+            <span class="line" data-reveal>数字人</span>
+            <span class="line italic" data-reveal>实时互动</span>
+        </h1>
+        <p class="hero-sub">智能回复、数字人合成、OBS 联动、RTMP 推流。<br>一个平台，搞定直播间的一切。</p>
+        <div class="hero-actions">
+            <a href="#cta" class="btn btn-primary" data-magnetic>立即体验 <span class="btn-arrow">&rarr;</span></a>
+            <a href="#features" class="btn btn-ghost" data-magnetic>了解更多</a>
+        </div>
+    </section>
+
+    <!-- Marquee -->
+    <div class="marquee">
+        <div class="marquee-track">
+            <span class="marquee-item">AI 智能回复 <span class="sep"></span></span>
+            <span class="marquee-item">数字人合成 <span class="sep"></span></span>
+            <span class="marquee-item">弹幕实时抓取 <span class="sep"></span></span>
+            <span class="marquee-item">OBS 关键词联动 <span class="sep"></span></span>
+            <span class="marquee-item">RTMP 推流 <span class="sep"></span></span>
+            <span class="marquee-item">本地部署 <span class="sep"></span></span>
+            <span class="marquee-item">DeepSeek 大模型 <span class="sep"></span></span>
+            <span class="marquee-item">Playwright 自动化 <span class="sep"></span></span>
+            <span class="marquee-item">AI 智能回复 <span class="sep"></span></span>
+            <span class="marquee-item">数字人合成 <span class="sep"></span></span>
+            <span class="marquee-item">弹幕实时抓取 <span class="sep"></span></span>
+            <span class="marquee-item">OBS 关键词联动 <span class="sep"></span></span>
+            <span class="marquee-item">RTMP 推流 <span class="sep"></span></span>
+            <span class="marquee-item">本地部署 <span class="sep"></span></span>
+            <span class="marquee-item">DeepSeek 大模型 <span class="sep"></span></span>
+            <span class="marquee-item">Playwright 自动化 <span class="sep"></span></span>
+        </div>
+    </div>
+
+    <!-- Bento Features -->
+    <section class="bento" id="features">
+        <div class="section-eyebrow">Core Features</div>
+        <h2 class="section-title">强大，却简单。</h2>
+        <p class="section-desc">从弹幕抓取到直播推流，每一步都为你准备好。</p>
+        <div class="bento-grid">
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#ede9fe;color:#7c3aed">
+                    <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/><path d="M10 17v4"/><path d="M14 17v4"/></svg>
+                </div>
+                <h3>AI 智能回复</h3>
+                <p>DeepSeek 大模型驱动，实时语义分析，个性化回复，话术库 + 冷却节流。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#e0f2fe;color:#0284c7">
+                    <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polygon points="10,9 16,12 10,15"/></svg>
+                </div>
+                <h3>数字人合成</h3>
+                <p>AI 语音 + 绿幕视频，口型同步、表情自然，7x24 不间断直播。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#dcfce7;color:#16a34a">
+                    <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <h3>弹幕实时抓取</h3>
+                <p>Playwright 驱动，&lt;90ms 延迟精准捕获弹幕、礼物、关注。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#fff7ed;color:#ea580c">
+                    <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                </div>
+                <h3>OBS 关键词联动</h3>
+                <p>关键词自动触发场景切换、音乐播放、特效触发。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#fce7f3;color:#db2777">
+                    <svg viewBox="0 0 24 24"><path d="M2 20h20"/><path d="M5 20v-8l7-5 7 5v8"/><rect x="9" y="13" width="6" height="7"/></svg>
+                </div>
+                <h3>完全本地化</h3>
+                <p>零云依赖，Python 3.10+ 开箱即用，隐私安全完全可控。</p>
+            </div>
+            <div class="bento-card">
+                <div class="bento-icon" style="background:#fef3c7;color:#d97706">
+                    <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                </div>
+                <h3>HLS / RTMP 推流</h3>
+                <p>FFmpeg 高效推流，无缝对接 OBS，支持抖音、视频号。</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats">
+        <div class="stats-inner">
+            <div><div class="stat-num" data-count="99">0%</div><div class="stat-label">弹幕捕获率</div></div>
+            <div><div class="stat-num">&lt;90ms</div><div class="stat-label">端到端延迟</div></div>
+            <div><div class="stat-num">24/7</div><div class="stat-label">稳定运行</div></div>
+            <div><div class="stat-num">1+</div><div class="stat-label">并发直播间</div></div>
+        </div>
+    </section>
+
+    <!-- Architecture Diagram -->
+    <section class="arch-section" id="arch">
+        <div class="section-eyebrow">Architecture</div>
+        <h2 class="section-title">全链路自动化。</h2>
+        <p class="section-desc">从浏览器到 OBS，数据在模块间无缝流动。</p>
+        <div class="arch-pipeline">
+            <div class="arch-nodes">
+                <div class="arch-node playwright">
+                    <div class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+                    <div class="name">Playwright</div>
+                    <div class="desc">浏览器自动化</div>
+                </div>
+                <div class="arch-node decoder">
+                    <div class="icon"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
+                    <div class="name">Decoder</div>
+                    <div class="desc">Protobuf 解码</div>
+                </div>
+                <div class="arch-node ai">
+                    <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg></div>
+                    <div class="name">AI Engine</div>
+                    <div class="desc">DeepSeek 大模型</div>
+                </div>
+                <div class="arch-node tts">
+                    <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></div>
+                    <div class="name">TTS Worker</div>
+                    <div class="desc">语音合成</div>
+                </div>
+                <div class="arch-node obs">
+                    <div class="icon"><svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
+                    <div class="name">OBS Bridge</div>
+                    <div class="desc">场景联动</div>
+                </div>
+                <div class="arch-node rtmp">
+                    <div class="icon"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+                    <div class="name">RTMP Push</div>
+                    <div class="desc">直播推流</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Horizontal Showcase -->
+    <section class="showcase-section" id="showcase">
+        <div class="showcase-header">
+            <div class="section-eyebrow">Highlights</div>
+            <h2 class="section-title">为直播而生。</h2>
+        </div>
+        <div class="showcase-track">
+            <div class="showcase-card dark"><span class="card-num">01</span><div class="card-tag">智能回复</div><h3>每条弹幕<br>都值得回应</h3><p>AI 理解语义，生成个性化回复，让每个观众都感受到关注。</p></div>
+            <div class="showcase-card blue"><span class="card-num">02</span><div class="card-tag">数字人</div><h3>你的虚拟<br>直播搭档</h3><p>口型同步、表情自然，7x24 小时不间断直播。</p></div>
+            <div class="showcase-card light"><span class="card-num">03</span><div class="card-tag">极速响应</div><h3>90 毫秒<br>抓住每条弹幕</h3><p>WebSocket 拦截 + DOM 补偿，不漏掉任何一条互动。</p></div>
+            <div class="showcase-card dark"><span class="card-num">04</span><div class="card-tag">OBS 联动</div><h3>关键词触发<br>一切可能</h3><p>场景切换、特效播放、音乐控制，一个关键词搞定。</p></div>
+            <div class="showcase-card blue"><span class="card-num">05</span><div class="card-tag">RTMP 推流</div><h3>一键开播<br>全平台覆盖</h3><p>抖音、视频号，一个平台推流所有直播间。</p></div>
+            <div class="showcase-card light"><span class="card-num">06</span><div class="card-tag">本地部署</div><h3>零云依赖<br>隐私可控</h3><p>Python 3.10+ 开箱即用，数据完全本地运行。</p></div>
+            <div class="showcase-card dark"><span class="card-num">07</span><div class="card-tag">话术库</div><h3>自定义话术<br>精准匹配</h3><p>预设回复模板，按场景、用户分级自动匹配最佳话术。</p></div>
+            <div class="showcase-card blue"><span class="card-num">08</span><div class="card-tag">多音色</div><h3>AI 语音合成<br>随心切换</h3><p>支持多供应商、多音色，主播助播角色自由定义。</p></div>
+        </div>
+    </section>
+
+    <!-- Danmaku Demo -->
+    <section class="danmaku-section" id="demo">
+        <div class="section-eyebrow">Live Demo</div>
+        <h2 class="section-title">实时互动，眼见为实。</h2>
+        <p class="section-desc">弹幕抓取 → AI 分析 → 智能回复，全链路可视化。</p>
+        <div class="danmaku-demo">
+            <div class="danmaku-demo-header"><div class="danmaku-dot"></div><div class="danmaku-demo-title">直播间弹幕流</div></div>
+            <div class="danmaku-container" id="danmaku-container"></div>
+        </div>
+    </section>
+
+    <!-- Terminal Quick Start -->
+    <section class="terminal-section" id="terminal">
+        <div class="section-eyebrow">Quick Start</div>
+        <h2 class="section-title">三行命令，开始直播。</h2>
+        <p class="section-desc">Python 3.10+，开箱即用。</p>
+        <div class="terminal">
+            <div class="terminal-bar">
+                <div class="terminal-dot r"></div>
+                <div class="terminal-dot y"></div>
+                <div class="terminal-dot g"></div>
+                <span class="terminal-title"> Terminal — aiszr</span>
+            </div>
+            <div class="terminal-body" id="terminal-body">
+                <!-- Lines injected by JS -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Feature Tabs -->
+    <section class="tabs-section" id="tabs">
+        <div class="section-eyebrow">Deep Dive</div>
+        <h2 class="section-title">深入了解。</h2>
+        <p class="section-desc">每个模块都经过精心打磨。</p>
+        <div class="tabs-nav">
+            <button class="tab-btn active" data-tab="0">弹幕抓取</button>
+            <button class="tab-btn" data-tab="1">AI 回复</button>
+            <button class="tab-btn" data-tab="2">数字人</button>
+            <button class="tab-btn" data-tab="3">OBS 联动</button>
+        </div>
+        <div class="tab-panel active" data-panel="0">
+            <div class="tab-visual" style="color:var(--accent)">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="13" y2="13"/></svg>
+            </div>
+            <div class="tab-content">
+                <h3>弹幕抓取引擎</h3>
+                <p>基于 Playwright 的 WebSocket 拦截方案，无需逆向协议，稳定可靠。</p>
+                <ul>
+                    <li><span class="check">✓</span> WebSocket 帧级拦截</li>
+                    <li><span class="check">✓</span> DOM 补偿双通道</li>
+                    <li><span class="check">✓</span> Protobuf 自动解码</li>
+                    <li><span class="check">✓</span> 断线自动重连</li>
+                    <li><span class="check">✓</span> &lt;90ms 端到端延迟</li>
+                </ul>
+            </div>
+        </div>
+        <div class="tab-panel" data-panel="1">
+            <div class="tab-visual" style="color:#7c3aed">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/><path d="M10 17v4"/><path d="M14 17v4"/></svg>
+            </div>
+            <div class="tab-content">
+                <h3>AI 回复引擎</h3>
+                <p>DeepSeek 大模型驱动，理解弹幕意图，生成个性化回复。</p>
+                <ul>
+                    <li><span class="check">✓</span> 语义理解 + 意图识别</li>
+                    <li><span class="check">✓</span> 话术库自定义</li>
+                    <li><span class="check">✓</span> 冷却节流防刷屏</li>
+                    <li><span class="check">✓</span> 用户分级差异化回复</li>
+                    <li><span class="check">✓</span> 短历史记忆上下文</li>
+                </ul>
+            </div>
+        </div>
+        <div class="tab-panel" data-panel="2">
+            <div class="tab-visual" style="color:#0284c7">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polygon points="10,9 16,12 10,15"/></svg>
+            </div>
+            <div class="tab-content">
+                <h3>数字人系统</h3>
+                <p>AI 语音合成 + 绿幕视频，一体化生成数字人直播内容。</p>
+                <ul>
+                    <li><span class="check">✓</span> 口型同步算法</li>
+                    <li><span class="check">✓</span> 多音色切换</li>
+                    <li><span class="check">✓</span> 绿幕抠像合成</li>
+                    <li><span class="check">✓</span> 7x24 不间断运行</li>
+                    <li><span class="check">✓</span> 支持自定义形象</li>
+                </ul>
+            </div>
+        </div>
+        <div class="tab-panel" data-panel="3">
+            <div class="tab-visual" style="color:#ea580c">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            </div>
+            <div class="tab-content">
+                <h3>OBS 智能联动</h3>
+                <p>关键词检测 → 动作触发，全自动场控。</p>
+                <ul>
+                    <li><span class="check">✓</span> 关键词命中阈值</li>
+                    <li><span class="check">✓</span> 场景自动切换</li>
+                    <li><span class="check">✓</span> 音乐/特效触发</li>
+                    <li><span class="check">✓</span> 全局冷却防重复</li>
+                    <li><span class="check">✓</span> WebSocket 远程控制</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Ecosystem -->
+    <section class="ecosystem">
+        <div class="section-eyebrow">Ecosystem</div>
+        <h2 class="section-title">开放生态。</h2>
+        <p class="section-desc" style="margin-left:auto;margin-right:auto;">支持主流平台与技术栈。</p>
+        <div class="eco-grid">
+            <div class="eco-item" title="抖音" style="color:#fe2c55">
+                <svg viewBox="0 0 24 24"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
+                <span>抖音</span>
+            </div>
+            <div class="eco-item" title="视频号" style="color:#07c160">
+                <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+                <span>视频号</span>
+            </div>
+            <div class="eco-item" title="OBS" style="color:#302e32">
+                <svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+                <span>OBS</span>
+            </div>
+            <div class="eco-item" title="DeepSeek" style="color:#4f46e5">
+                <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>
+                <span>DeepSeek</span>
+            </div>
+            <div class="eco-item" title="Playwright" style="color:#2ead33">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                <span>Playwright</span>
+            </div>
+            <div class="eco-item" title="FFmpeg" style="color:#007808">
+                <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                <span>FFmpeg</span>
+            </div>
+            <div class="eco-item" title="Python" style="color:#3776ab">
+                <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                <span>Python</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta" id="cta">
+        <div class="cta-orb"></div>
+        <h2>开启你的<br><em style="font-style:italic;color:var(--accent)">AI 直播时代</em></h2>
+        <p>免费下载，本地运行，零门槛上手。</p>
+        <a href="#" class="btn btn-primary" data-magnetic>立即下载 <span class="btn-arrow">&rarr;</span></a>
+    </section>
+
+    <footer>
+        <p>&copy; 2026 Aiszr. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="#">关于我们</a>
+            <a href="#">隐私政策</a>
+            <a href="#">文档</a>
+            <a href="#">联系</a>
+        </div>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollToPlugin.min.js"></script>
+    <script>
+        gsap.registerPlugin(ScrollTrigger, ScrollToPlugin);
+
+        // ===== Loader =====
+        const loaderTl = gsap.timeline({ onComplete: () => { document.querySelector('.loader').style.display = 'none'; initPage(); } });
+        loaderTl
+            .to('.loader-text span', { opacity: 1, y: 0, duration: .5, stagger: .06, ease: 'power3.out' })
+            .to('.loader-bar-fill', { width: '100%', duration: 1.2, ease: 'power2.inOut' }, .3)
+            .to('.loader', { opacity: 0, duration: .5, ease: 'power2.inOut' }, '+=0.2')
+            .set('.loader', { display: 'none' });
+
+        function initPage() {
+            // ===== Char Split =====
+            function splitChars(el) {
+                const t = el.textContent; el.innerHTML = '';
+                [...t].forEach(ch => { const s = document.createElement('span'); s.style.display = 'inline-block'; s.style.opacity = '0'; s.style.transform = 'translateY(100%)'; s.textContent = ch === ' ' ? ' ' : ch; el.appendChild(s); });
+                return el.querySelectorAll('span');
+            }
+
+            // ===== Text Scramble =====
+            const scrambleChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*';
+            function scrambleText(el, finalText, duration = 1.2) {
+                const frames = Math.floor(duration / 0.03);
+                let frame = 0;
+                const interval = setInterval(() => {
+                    el.textContent = [...finalText].map((ch, i) => {
+                        if (ch === ' ') return ' ';
+                        if (i < (frame / frames) * finalText.length) return ch;
+                        return scrambleChars[Math.floor(Math.random() * scrambleChars.length)];
+                    }).join('');
+                    frame++;
+                    if (frame > frames) { clearInterval(interval); el.textContent = finalText; }
+                }, 30);
+            }
+
+            // ===== Hero =====
+            const hc = [];
+            document.querySelectorAll('.hero h1 .line[data-reveal]').forEach(l => hc.push(...splitChars(l)));
+            const heroTl = gsap.timeline({ delay: .1 });
+            heroTl.from('.hero-brand', { opacity: 0, y: -10, duration: .6, ease: 'power3.out' })
+                .to(hc, { opacity: 1, y: 0, duration: .8, stagger: .04, ease: 'power4.out' }, '-=.3')
+                .from('.hero-sub', { opacity: 0, y: 30, duration: .7, ease: 'power3.out' }, '-=.3')
+                .from('.hero-actions', { opacity: 0, y: 20, duration: .6, ease: 'power3.out' }, '-=.3');
+
+            // ===== Sections =====
+            gsap.utils.toArray('.section-eyebrow, .section-title, .section-desc').forEach(el => {
+                gsap.from(el, { opacity: 0, y: 40, duration: .8, ease: 'power3.out', scrollTrigger: { trigger: el, start: 'top 85%' } });
+            });
+
+            gsap.from('.bento-card', { opacity: 0, y: 60, scale: .95, duration: .7, stagger: .1, ease: 'power3.out', scrollTrigger: { trigger: '.bento-grid', start: 'top 80%' } });
+
+            // ===== Stats Counter =====
+            const statsObserver = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    entry.target.querySelectorAll('.stat-num[data-count]').forEach(el => {
+                        const target = parseInt(el.dataset.count);
+                        const suffix = el.textContent.replace(/[0-9]/g, '');
+                        let current = 0;
+                        const duration = 2000;
+                        const startTime = performance.now();
+                        const tick = (now) => {
+                            const elapsed = now - startTime;
+                            const progress = Math.min(elapsed / duration, 1);
+                            const eased = 1 - Math.pow(1 - progress, 3);
+                            current = Math.round(target * eased);
+                            el.textContent = current + suffix;
+                            if (progress < 1) requestAnimationFrame(tick);
+                        };
+                        requestAnimationFrame(tick);
+                    });
+                    statsObserver.unobserve(entry.target);
+                });
+            }, { threshold: 0.3 });
+            const statsSection = document.querySelector('.stats');
+            if (statsSection) statsObserver.observe(statsSection);
+
+            // ===== Architecture Pipeline =====
+            gsap.set('.arch-node', { opacity: 0, y: 30, scale: .9 });
+            ScrollTrigger.create({
+                trigger: '.arch-pipeline',
+                start: 'top 85%',
+                once: true,
+                onEnter: () => {
+                    gsap.to('.arch-node', { opacity: 1, y: 0, scale: 1, duration: .6, stagger: .1, ease: 'back.out(1.5)' });
+                }
+            });
+
+            // ===== Horizontal Showcase =====
+            const track = document.querySelector('.showcase-track');
+            if (track) {
+                const tw = track.scrollWidth - innerWidth + 96;
+                gsap.to(track, { x: -tw, ease: 'none', scrollTrigger: { trigger: '.showcase-section', start: 'top 20%', end: () => '+=' + tw, scrub: 1, pin: true } });
+            }
+
+            // ===== Danmaku =====
+            const dd = [
+                { nick: '小明', msg: '这个产品多少钱？', delay: 0, top: 20 },
+                { nick: 'AI 助播', msg: '亲，这款今天特价 ¥99，买二送一哦！', ai: true, delay: 1.5, top: 20 },
+                { nick: '花花', msg: '有优惠券吗', delay: 3, top: 80 },
+                { nick: 'AI 助播', msg: '有的呢～ 输入 "花花" 领取专属 5 折券 🎉', ai: true, delay: 4.5, top: 80 },
+                { nick: '大壮', msg: '质量怎么样', delay: 6, top: 140 },
+                { nick: 'AI 助播', msg: '100% 好评率，支持 7 天无理由退换～', ai: true, delay: 7.5, top: 140 },
+                { nick: '小美', msg: '已下单！', delay: 9, top: 200 },
+                { nick: 'AI 助播', msg: '感谢小美！已升级 VIP，终身 9 折 🎁', ai: true, delay: 10.5, top: 200 },
+            ];
+            const dCont = document.getElementById('danmaku-container');
+            let dPlayed = false;
+            function playDanmaku() {
+                if (dPlayed) return; dPlayed = true;
+                dd.forEach(d => { setTimeout(() => {
+                    const el = document.createElement('div');
+                    el.className = d.ai ? 'danmaku-ai-reply' : 'danmaku-msg';
+                    el.innerHTML = d.ai ? d.msg : `<span class="nickname">${d.nick}</span>${d.msg}`;
+                    el.style.top = d.top + 'px';
+                    dCont.appendChild(el);
+                    gsap.fromTo(el, { opacity: 0, x: d.ai ? 40 : -40, scale: .9 }, { opacity: 1, x: 0, scale: 1, duration: .5, ease: 'back.out(1.5)' });
+                }, d.delay * 1000); });
+            }
+            ScrollTrigger.create({ trigger: '.danmaku-demo', start: 'top 70%', once: true, onEnter: playDanmaku });
+
+            // ===== Terminal Typing =====
+            const termLines = [
+                { text: '<span class="comment"># 安装 Aiszr</span>', delay: 0 },
+                { text: '<span class="prompt">$</span> <span class="cmd">pip install aiszr</span>', delay: 0.3 },
+                { text: '', delay: 0.8 },
+                { text: '<span class="success">✓</span> <span class="info">Aiszr v1.2.0 installed successfully</span>', delay: 1.2 },
+                { text: '', delay: 1.5 },
+                { text: '<span class="comment"># 启动直播助手</span>', delay: 1.8 },
+                { text: '<span class="prompt">$</span> <span class="cmd">aiszr start</span>', delay: 2.1 },
+                { text: '', delay: 2.5 },
+                { text: '<span class="accent">╭──────────────────────────────────────╮</span>', delay: 2.8 },
+                { text: '<span class="accent">│</span>  <span class="success">Aiszr v1.2.0</span>  —  AI 数字人直播助手   <span class="accent">│</span>', delay: 3.0 },
+                { text: '<span class="accent">╰──────────────────────────────────────╯</span>', delay: 3.2 },
+                { text: '', delay: 3.4 },
+                { text: '<span class="success">✓</span> WebSocket server started on <span class="info">ws://localhost:8765</span>', delay: 3.6 },
+                { text: '<span class="success">✓</span> Playwright browser launched (<span class="info">Edge</span>)', delay: 3.9 },
+                { text: '<span class="success">✓</span> Waiting for Douyin login <span class="warn">[QR Scan]</span>...', delay: 4.2 },
+                { text: '<span class="success">✓</span> Login detected! Session ready.', delay: 5.0 },
+                { text: '<span class="success">✓</span> Danmaku capture started — <span class="info">&lt;90ms latency</span>', delay: 5.5 },
+                { text: '<span class="success">✓</span> AI reply engine online — <span class="info">DeepSeek</span>', delay: 5.8 },
+                { text: '<span class="success">✓</span> OBS bridge connected', delay: 6.1 },
+                { text: '', delay: 6.3 },
+                { text: '<span class="warn">🔴 LIVE</span> — All systems operational. <span class="success">Ready for streaming!</span>', delay: 6.5 },
+                { text: '', delay: 6.8 },
+                { text: '<span class="prompt">aiszr ▸</span> <span class="terminal-cursor"></span>', delay: 7.0 },
+            ];
+            let termPlayed = false;
+            function playTerminal() {
+                if (termPlayed) return; termPlayed = true;
+                const body = document.getElementById('terminal-body');
+                termLines.forEach(l => { setTimeout(() => {
+                    const div = document.createElement('div');
+                    div.className = 'terminal-line';
+                    div.innerHTML = l.text || '&nbsp;';
+                    body.appendChild(div);
+                    gsap.to(div, { opacity: 1, y: 0, duration: .3, ease: 'power2.out' });
+                }, l.delay * 1000); });
+            }
+            ScrollTrigger.create({ trigger: '.terminal', start: 'top 70%', once: true, onEnter: playTerminal });
+
+            // ===== Tabs =====
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                    btn.classList.add('active');
+                    const panel = document.querySelector(`.tab-panel[data-panel="${btn.dataset.tab}"]`);
+                    panel.classList.add('active');
+                    gsap.from(panel.children, { opacity: 0, y: 20, duration: .5, stagger: .1, ease: 'power3.out' });
+                });
+            });
+
+            // ===== Ecosystem Float =====
+            const ecoObs = new IntersectionObserver(entries => {
+                entries.forEach(e => {
+                    if (!e.isIntersecting) return;
+                    gsap.to('.eco-item', { opacity: 1, y: 0, duration: .4, stagger: .05, ease: 'power2.out' });
+                    ecoObs.unobserve(e.target);
+                });
+            }, { threshold: .1 });
+            gsap.set('.eco-item', { opacity: 0, y: 20 });
+            const ecoGrid = document.querySelector('.eco-grid');
+            if (ecoGrid) ecoObs.observe(ecoGrid);
+
+            // ===== CTA =====
+            gsap.from('.cta h2, .cta p, .cta .btn', { opacity: 0, y: 50, stagger: .15, duration: .8, ease: 'power3.out',
+                scrollTrigger: { trigger: '.cta', start: 'top 75%' }
+            });
+        }
+
+        // ===== Cursor =====
+        const dot = document.querySelector('.cursor-dot'), ring = document.querySelector('.cursor-ring');
+        let mx = 0, my = 0, rx = 0, ry = 0;
+        document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; gsap.to(dot, { x: mx - 3, y: my - 3, duration: .1, ease: 'power2.out' }); });
+        (function aR() { rx += (mx - rx) * .12; ry += (my - ry) * .12; ring.style.transform = `translate(${rx - 18}px,${ry - 18}px)`; requestAnimationFrame(aR); })();
+        document.querySelectorAll('a, button, [data-magnetic], .bento-card, .showcase-card, .eco-item, .arch-node').forEach(el => {
+            el.addEventListener('mouseenter', () => ring.classList.add('hover'));
+            el.addEventListener('mouseleave', () => ring.classList.remove('hover'));
+        });
+
+        // ===== Magnetic =====
+        document.querySelectorAll('[data-magnetic]').forEach(btn => {
+            btn.addEventListener('mousemove', e => { const r = btn.getBoundingClientRect(); gsap.to(btn, { x: (e.clientX - r.left - r.width / 2) * .3, y: (e.clientY - r.top - r.height / 2) * .3, duration: .4, ease: 'power2.out' }); });
+            btn.addEventListener('mouseleave', () => { gsap.to(btn, { x: 0, y: 0, duration: .6, ease: 'elastic.out(1,.4)' }); });
+        });
+
+        // ===== Nav =====
+        window.addEventListener('scroll', () => document.querySelector('nav').classList.toggle('scrolled', scrollY > 50));
+        document.querySelectorAll('a[href^="#"]').forEach(a => {
+            a.addEventListener('click', e => { e.preventDefault(); const t = document.querySelector(a.getAttribute('href')); if (t) gsap.to(window, { scrollTo: { y: t, offsetY: 60 }, duration: 1.2, ease: 'power3.inOut' }); });
+        });
+
+        // ===== Parallax Orbs =====
+        gsap.to('.hero-orb-1', { y: 100, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: 1 } });
+        gsap.to('.hero-orb-2', { y: 60, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: 1 } });
+
+        // ===== Particles =====
+        const canvas = document.getElementById('particle-canvas'), ctx = canvas.getContext('2d');
+        let particles = [], lastP = { x: 0, y: 0 };
+        function resizeCanvas() { canvas.width = innerWidth; canvas.height = innerHeight; }
+        resizeCanvas(); addEventListener('resize', resizeCanvas);
+        class Particle {
+            constructor(x, y) { this.x = x; this.y = y; this.vx = (Math.random() - .5) * 1.5; this.vy = (Math.random() - .5) * 1.5; this.life = 1; this.decay = .018 + Math.random() * .015; this.size = 1.5 + Math.random() * 2.5; }
+            update() { this.x += this.vx; this.y += this.vy; this.vy += .015; this.life -= this.decay; this.size *= .985; }
+            draw() { ctx.save(); ctx.globalAlpha = this.life * .6; ctx.fillStyle = `rgba(0,102,255,${this.life})`; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+        }
+        document.addEventListener('mousemove', e => {
+            const dx = e.clientX - lastP.x, dy = e.clientY - lastP.y, speed = Math.sqrt(dx * dx + dy * dy);
+            const count = Math.min(Math.floor(speed / 10), 3);
+            for (let i = 0; i < count; i++) particles.push(new Particle(e.clientX + (Math.random() - .5) * 8, e.clientY + (Math.random() - .5) * 8));
+            lastP.x = e.clientX; lastP.y = e.clientY;
+        });
+        (function aP() { ctx.clearRect(0, 0, canvas.width, canvas.height); particles = particles.filter(p => p.life > 0); particles.forEach(p => { p.update(); p.draw(); }); if (particles.length > 120) particles = particles.slice(-120); requestAnimationFrame(aP); })();
+
+        // ===== Per-Element Click Effects =====
+        // Primary buttons: elastic bounce
+        document.querySelectorAll('.btn-primary').forEach(btn => {
+            btn.addEventListener('click', () => {
+                gsap.fromTo(btn, { scale: .93 }, { scale: 1, duration: .5, ease: 'elastic.out(1,.35)' });
+            });
+        });
+        // Ghost buttons: subtle press
+        document.querySelectorAll('.btn-ghost').forEach(btn => {
+            btn.addEventListener('click', () => {
+                gsap.fromTo(btn, { scale: .96 }, { scale: 1, duration: .4, ease: 'power3.out' });
+            });
+        });
+        // Tab buttons: quick snap
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                gsap.fromTo(btn, { scale: .92 }, { scale: 1, duration: .35, ease: 'back.out(3)' });
+            });
+        });
+
+        // ===== Bento Card Tilt =====
+        document.querySelectorAll('.bento-card, .showcase-card').forEach(card => {
+            card.addEventListener('mousemove', e => {
+                const r = card.getBoundingClientRect();
+                const x = (e.clientX - r.left) / r.width - 0.5;
+                const y = (e.clientY - r.top) / r.height - 0.5;
+                gsap.to(card, { rotationY: x * 8, rotationX: -y * 8, transformPerspective: 800, duration: .4, ease: 'power2.out' });
+            });
+            card.addEventListener('mouseleave', () => {
+                gsap.to(card, { rotationY: 0, rotationX: 0, duration: .6, ease: 'elastic.out(1,.5)' });
+            });
+        });
+    </script>
+</body>
+</html>

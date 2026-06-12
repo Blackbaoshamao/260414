@@ -12,10 +12,6 @@ from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QListWidget, QFormLayout,
     QDialogButtonBox, QFrame, QCheckBox, QSpinBox, QDoubleSpinBox,
     QComboBox, QListWidgetItem, QMessageBox, QLabel, QPushButton, QLineEdit, QCheckBox, QDialogButtonBox, QFormLayout, QListWidget, QMessageBox, QFrame, QSpinBox, QDoubleSpinBox, QComboBox, QListWidgetItem)
-from siui.core import SiGlobal
-from siui.components.widgets import SiPushButton, SiDenseHContainer, SiLineEdit, SiLabel
-from siui.components.combobox.combobox import SiComboBox
-from siui.components.option_card import SiOptionCardLinear
 import ui_theme as theme
 from ui_components import MacButton, MacLineEdit, MacSpinBox
 
@@ -69,10 +65,7 @@ class ObsRuleDialog(QDialog):
         self._apply_theme_styles()
 
     def _apply_theme_styles(self):
-        try:
-            SiGlobal.siui.reloadStyleSheetRecursively(self)
-        except Exception:
-            pass
+        pass
 
         self.setStyleSheet(
             f"QDialog {{ background-color: {theme.CLR_BG}; color: {theme.CLR_TEXT_PRI}; }}"

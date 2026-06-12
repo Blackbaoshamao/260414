@@ -9,10 +9,13 @@ findChildren() on theme switch and refresh all colors live.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional, Union
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QIcon
+from ui_constants import _CARD_W, _CARD_H
+
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QIcon, QPixmap
 from PyQt5.QtWidgets import (
     QFrame, QWidget, QHBoxLayout, QVBoxLayout, QLabel,
     QPushButton, QLineEdit, QSpinBox, QComboBox,
@@ -33,13 +36,13 @@ def _build_shadow(elevation: int) -> Optional[QGraphicsDropShadowEffect]:
         return None
     effect = QGraphicsDropShadowEffect()
     if elevation == 1:
-        effect.setBlurRadius(18)
-        effect.setOffset(0, 5)
-        effect.setColor(QColor(0, 0, 0, 20))
+        effect.setBlurRadius(24)
+        effect.setOffset(0, 4)
+        effect.setColor(QColor(0, 0, 0, 38))
     else:
-        effect.setBlurRadius(28)
-        effect.setOffset(0, 10)
-        effect.setColor(QColor(0, 0, 0, 28))
+        effect.setBlurRadius(40)
+        effect.setOffset(0, 8)
+        effect.setColor(QColor(0, 0, 0, 50))
     return effect
 
 
@@ -93,6 +96,47 @@ class SectionHeader(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# PageIntroHeader — clean page title matching OBS page style
+# ---------------------------------------------------------------------------
+
+
+class PageIntroHeader(QWidget):
+    """Page title + optional subtitle, tight spacing, no decorations."""
+
+    def __init__(self, title: str, subtitle: str = "",
+                 parent: Optional[QWidget] = None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(4)
+
+        self._title_label = QLabel(title)
+        self._title_label.setObjectName("PageIntroTitle")
+        self._title_label.setFont(theme.FONT_TITLE_2)
+        layout.addWidget(self._title_label)
+
+        self._subtitle_label: Optional[QLabel] = None
+        if subtitle:
+            self._subtitle_label = QLabel(subtitle)
+            self._subtitle_label.setObjectName("PageIntroSubtitle")
+            self._subtitle_label.setFont(theme.FONT_BODY)
+            self._subtitle_label.setWordWrap(True)
+            layout.addWidget(self._subtitle_label)
+
+        self.apply_theme_styles()
+
+    def apply_theme_styles(self):
+        self._title_label.setStyleSheet(
+            f"color: {theme.CLR_TEXT_PRI}; background: transparent; border: none;"
+        )
+        if self._subtitle_label is not None:
+            self._subtitle_label.setStyleSheet(
+                f"color: {theme.CLR_TEXT_TERT}; background: transparent; border: none;"
+            )
+
+
+# ---------------------------------------------------------------------------
 # MacCard — the workhorse
 # ---------------------------------------------------------------------------
 
@@ -117,6 +161,8 @@ class MacCard(QFrame):
         super().__init__(parent)
         self._vibrancy = vibrancy
         self._radius = radius
+        self._elevation = elevation
+        self._hovered = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(*padding)
@@ -136,15 +182,59 @@ class MacCard(QFrame):
 
         self.apply_theme_styles()
 
-    def apply_theme_styles(self):
-        bg = theme.CLR_BG_VIBRANCY if self._vibrancy else theme.CLR_BG_CARD
-        self.setStyleSheet(f"""
+    def enterEvent(self, event):
+        self._hovered = True
+        self._apply_shadow(is_hover=True)
+        self.setStyleSheet(self._current_style().replace(
+            f"background-color: {self._bg_color()};",
+            f"background-color: {theme.CLR_BG_CARD_HOVER};",
+        ))
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._apply_shadow(is_hover=False)
+        self.setStyleSheet(self._current_style())
+        super().leaveEvent(event)
+
+    def _bg_color(self) -> str:
+        if self._vibrancy:
+            return theme.CLR_BG_VIBRANCY
+        if self._hovered:
+            return theme.CLR_BG_CARD_HOVER
+        return theme.CLR_BG_CARD
+
+    def _apply_shadow(self, is_hover: bool):
+        if self._elevation <= 0:
+            return
+        effect = QGraphicsDropShadowEffect()
+        if is_hover:
+            effect.setBlurRadius(32)
+            effect.setOffset(0, 4)
+            effect.setColor(QColor(0, 0, 0, 56))
+        elif self._elevation == 1:
+            effect.setBlurRadius(24)
+            effect.setOffset(0, 4)
+            effect.setColor(QColor(0, 0, 0, 38))
+        else:
+            effect.setBlurRadius(40)
+            effect.setOffset(0, 8)
+            effect.setColor(QColor(0, 0, 0, 50))
+        self.setGraphicsEffect(effect)
+
+    def _current_style(self) -> str:
+        accent_top = theme._hex_with_alpha(theme.CLR_ACCENT, 38)
+        return f"""
             MacCard {{
-                background-color: {bg};
+                background-color: {self._bg_color()};
                 border: 1px solid {theme.CLR_HAIRLINE};
+                border-top: 2px solid {accent_top};
                 border-radius: {self._radius}px;
             }}
-        """)
+        """
+
+    def apply_theme_styles(self):
+        self.setStyleSheet(self._current_style())
 
     def body(self) -> QVBoxLayout:
         """Inner layout — add content widgets here."""
@@ -356,6 +446,7 @@ class MacComboBox(QComboBox):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setMinimumWidth(160)
+        self.setMinimumHeight(max(36, self.fontMetrics().height() + 16))
         self.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
         self.apply_theme_styles()
 
@@ -363,7 +454,7 @@ class MacComboBox(QComboBox):
         self.setStyleSheet(theme._build_input_field_stylesheet(
             selector="QComboBox",
             radius=theme.RADIUS_MD,
-            padding="4px 12px",
+            padding="5px 12px",
             include_combo=True,
         ))
 
@@ -394,6 +485,132 @@ class MacSeparator(QFrame):
         )
 
 
+# ---------------------------------------------------------------------------
+# Video thumbnail cards — used by voiceconfigpage & digitalhumanpage
+# ---------------------------------------------------------------------------
+
+
+class VideoThumbCard(QFrame):
+    """Clickable video thumbnail with selection border and status badge."""
+    clicked = pyqtSignal(int)
+    remove_requested = pyqtSignal(int)
+
+    _BORDER_W = 2
+    _CONTENT_MARGIN = 2
+    _INNER_INSET = _BORDER_W + _CONTENT_MARGIN
+
+    def __init__(self, index: int, video_path: str, pixmap: Optional[QPixmap],
+                 parent=None, status_text: str = ""):
+        super().__init__(parent)
+        self._index = index
+        self.setFixedSize(_CARD_W, _CARD_H)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setCursor(Qt.PointingHandCursor)
+        self._selected = False
+        self._pixmap = pixmap
+        self._apply_border_style(theme.CLR_BORDER)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(self._CONTENT_MARGIN, self._CONTENT_MARGIN,
+                                  self._CONTENT_MARGIN, self._CONTENT_MARGIN)
+        layout.setSpacing(0)
+
+        inner_w = _CARD_W - 2 * self._INNER_INSET
+        status_h = 24
+        inner_h = _CARD_H - 2 * self._INNER_INSET - status_h
+        self._thumb_label = QLabel(self)
+        self._thumb_label.setFixedSize(inner_w, inner_h)
+        self._thumb_label.setAlignment(Qt.AlignCenter)
+        self._thumb_label.setStyleSheet(
+            f"border-radius: 9px; background-color: {theme.CLR_INPUT_BG};"
+        )
+        if pixmap and not pixmap.isNull():
+            scaled = pixmap.scaled(
+                inner_w, inner_h,
+                Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation,
+            )
+            self._thumb_label.setPixmap(scaled)
+        else:
+            self._thumb_label.setText(os.path.basename(video_path)[:12])
+        layout.addWidget(self._thumb_label)
+        self._badge_label = QLabel(self)
+        self._badge_label.setAlignment(Qt.AlignCenter)
+        self._badge_label.setStyleSheet(
+            "QLabel {"
+            "background-color: transparent;"
+            f"color: {theme.CLR_TEXT_SEC};"
+            "border: none;"
+            "font-size: 11px;"
+            "padding: 2px 0;"
+            "}"
+        )
+        self._badge_label.setFixedSize(inner_w, status_h)
+        self.set_status(status_text)
+        layout.addWidget(self._badge_label)
+
+    def _apply_border_style(self, color: str):
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme.CLR_INPUT_BG};
+                border: {self._BORDER_W}px solid {color};
+                border-radius: 12px;
+            }}
+        """)
+
+    @property
+    def index(self):
+        return self._index
+
+    def set_status(self, text: str):
+        text = (text or "").strip()
+        self._badge_label.setText(text)
+
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        self._apply_border_style(theme.CLR_ACCENT if selected else theme.CLR_BORDER)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self._index)
+        elif event.button() == Qt.RightButton:
+            self.remove_requested.emit(self._index)
+        super().mousePressEvent(event)
+
+
+class AddCard(QFrame):
+    """Dashed-border '+' card for adding new items."""
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(_CARD_W, _CARD_H)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme.CLR_INPUT_BG};
+                border: 1px dashed {theme.CLR_BORDER};
+                border-radius: 12px;
+            }}
+            QFrame:hover {{
+                border-color: {theme.CLR_ACCENT};
+                background-color: {theme.CLR_BG_ELEVATED};
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        plus_label = QLabel("+", self)
+        plus_label.setAlignment(Qt.AlignCenter)
+        plus_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; font-size: 32pt; border: none; background: transparent;")
+        layout.addWidget(plus_label)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 __all__ = (
     "MacCard",
     "SectionHeader",
@@ -402,4 +619,6 @@ __all__ = (
     "MacSpinBox",
     "MacComboBox",
     "MacSeparator",
+    "VideoThumbCard",
+    "AddCard",
 )
